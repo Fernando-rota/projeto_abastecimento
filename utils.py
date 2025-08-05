@@ -1,110 +1,59 @@
-import pandas as pd
 import streamlit as st
-import plotly.express as px
+import pandas as pd
+from utils import processar_planilha, calcular_consumo, comparar_fontes, gerar_graficos
 
-def processar_planilha(arquivo):
-    xls = pd.ExcelFile(arquivo)
-    externo = pd.read_excel(xls, "Abastecimento Externo")
-    interno = pd.read_excel(xls, "Abastecimento Interno")
+st.set_page_config(page_title="Dashboard de Abastecimento", layout="wide")
+st.title("🚚 Dashboard de Abastecimento de Frota")
 
-    # Marcar o tipo
-    externo['tipo'] = 'Externo'
-    interno['tipo'] = interno['Tipo'].fillna('Saída')
+# Upload da planilha
+arquivo = st.file_uploader("📂 Faça upload da planilha de abastecimento (.xlsx)", type=["xlsx"])
+if arquivo:
+    df_unificado, df_interno, df_externo = processar_planilha(arquivo)
 
-    # Manter apenas saídas no abastecimento interno
-    interno = interno[interno['tipo'].str.lower().str.contains('saída')]
+    # Layout dos filtros em colunas
+    with st.expander("🔍 Filtros", expanded=True):
+        col1, col2, col3 = st.columns(3)
 
-    # Renomear colunas para padronizar
-    externo = externo.rename(columns={
-        'Data': 'data',
-        'Placa': 'placa',
-        'Quantidade de litros': 'litros',
-        'Valor Unitario': 'valor_unit',
-        'Valor Total': 'valor_total',
-        'KM Atual': 'km_atual',
-    })
+        with col1:
+            placas = sorted(df_unificado['placa'].dropna().unique())
+            placa_selecionada = st.multiselect("🚛 Placas", placas, default=placas)
 
-    interno = interno.rename(columns={
-        'Data': 'data',
-        'Placa': 'placa',
-        'Quantidade de litros': 'litros',
-        'Valor Unitario': 'valor_unit',
-        'Valor Total': 'valor_total',
-        'KM Atual': 'km_atual',
-    })
+        with col2:
+            tipo_selecionado = st.multiselect("⛽ Tipo de Abastecimento", ["Interno", "Externo"], default=["Interno", "Externo"])
 
-    # Conversão segura de datas
-    externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
-    interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
+        with col3:
+            data_min, data_max = df_unificado["data"].min(), df_unificado["data"].max()
+            data_range = st.date_input("📅 Período", [data_min, data_max])
 
-    # Remover linhas com datas inválidas
-    externo = externo.dropna(subset=['data'])
-    interno = interno.dropna(subset=['data'])
+    # Aplicar filtros
+    df_filtrado = df_unificado[
+        (df_unificado['placa'].isin(placa_selecionada)) &
+        (df_unificado['tipo'].isin(tipo_selecionado)) &
+        (df_unificado['data'].between(pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])))
+    ]
 
-    # Selecionar e padronizar colunas
-    colunas = ['data', 'placa', 'litros', 'valor_unit', 'valor_total', 'km_atual', 'tipo']
-    df_unificado = pd.concat([externo[colunas], interno[colunas]], ignore_index=True)
+    # Abas do dashboard
+    aba_resumo, aba_consumo, aba_comparativo, aba_graficos = st.tabs([
+        "📊 Resumo Geral",
+        "📈 Consumo Médio",
+        "⚖️ Comparativo Interno x Externo",
+        "📉 Gráficos Interativos"
+    ])
 
-    # Limpar placas inválidas
-    df_unificado['placa'] = df_unificado['placa'].astype(str).str.upper().str.strip()
-    df_unificado = df_unificado[df_unificado['placa'] != '-']
-    df_unificado = df_unificado[df_unificado['placa'].str.lower() != 'correção']
+    with aba_resumo:
+        st.markdown("### 🔎 Registros Filtrados")
+        st.dataframe(df_filtrado, use_container_width=True)
 
-    return df_unificado, interno, externo
+    with aba_consumo:
+        st.markdown("### 📈 Relatório de Consumo Médio por Veículo (km/l)")
+        consumo_df = calcular_consumo(df_filtrado)
+        st.dataframe(consumo_df, use_container_width=True)
 
+    with aba_comparativo:
+        st.markdown("### ⚖️ Comparativo de Abastecimento Interno x Externo")
+        comparativo_df = comparar_fontes(df_filtrado)
+        st.dataframe(comparativo_df, use_container_width=True)
 
-def calcular_consumo(df):
-    df = df.sort_values(['placa', 'data']).copy()
-    df['km_anterior'] = df.groupby('placa')['km_atual'].shift(1)
-    df['km_rodado'] = df['km_atual'] - df['km_anterior']
-
-    # Eliminar casos com km_rodado <= 0 ou litros <= 0
-    df = df[(df['km_rodado'] > 0) & (df['litros'] > 0)]
-
-    df['consumo_km_l'] = df['km_rodado'] / df['litros']
-    consumo = df.groupby('placa').agg({
-        'km_rodado': 'sum',
-        'litros': 'sum',
-        'consumo_km_l': 'mean'
-    }).reset_index()
-
-    consumo.columns = ['Placa', 'KM Rodado', 'Litros Consumidos', 'Consumo Médio (km/l)']
-    return consumo.round(2)
-
-
-def comparar_fontes(df):
-    comp = df.groupby(['tipo']).agg({
-        'litros': 'sum',
-        'valor_total': 'sum'
-    }).reset_index()
-
-    comp['valor_medio_litro'] = comp['valor_total'] / comp['litros']
-    comp.columns = ['Tipo', 'Total de Litros', 'Total Pago', 'Valor Médio por Litro']
-    return comp.round(2)
-
-
-def gerar_graficos(df):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        fig1 = px.histogram(
-            df,
-            x='data',
-            y='litros',
-            color='tipo',
-            barmode='group',
-            title='⛽ Litros Abastecidos por Data'
-        )
-        fig1.update_layout(xaxis_title="Data", yaxis_title="Litros")
-        st.plotly_chart(fig1, use_container_width=True)
-
-    with col2:
-        fig2 = px.box(
-            df,
-            x='placa',
-            y='valor_unit',
-            color='tipo',
-            title='💰 Distribuição do Valor por Litro por Veículo'
-        )
-        fig2.update_layout(xaxis_title="Placa", yaxis_title="Valor Unitário (R$)")
-        st.plotly_chart(fig2, use_container_width=True)
+    with aba_graficos:
+        st.markdown("### 📊 Gráficos Interativos")
+        gerar_graficos(df_filtrado)
