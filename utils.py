@@ -1,133 +1,91 @@
 import pandas as pd
 
-def carregar_dados(arquivo):
-    xls = pd.ExcelFile(arquivo)
+def carregar_dados(xls):
     externo = pd.read_excel(xls, "Abastecimento Externo")
     interno = pd.read_excel(xls, "Abastecimento Interno")
-    return externo, interno
 
-def preparar_dados(externo_raw, interno_raw):
-    externo = externo_raw.copy()
-    interno = interno_raw.copy()
-    
-    externo.columns = externo.columns.str.strip().str.lower()
-    interno.columns = interno.columns.str.strip().str.lower()
-    
-    externo['combustivel'] = externo['descrição despesa'].str.upper()
-    interno['combustivel'] = interno['descrição despesa'].str.upper()
-    
-    mapa_combustivel = {
-        'DIESEL COMUM': 'Diesel Comum',
-        'GASOLINA COMUM': 'Gasolina Comum',
-        'ARLA': 'Arla',
-    }
-    
-    externo['combustivel'] = externo['combustivel'].map(mapa_combustivel).fillna('Outro')
-    interno['combustivel'] = interno['combustivel'].map(mapa_combustivel).fillna('Outro')
-    
+    # Externo
     externo = externo.rename(columns={
-        "data": "data",
-        "placa": "placa",
-        "km atual": "km",
-        "quantidade de litros": "litros",
-        "valor total": "valor"
+        "DATA": "data",
+        "PLACA": "placa",
+        "POSTO": "posto",
+        "KM ATUAL": "km_atual",
+        "CONSUMO": "litros",
+        "CUSTO TOTAL": "valor_pago",
+        "DESCRIÇÃO DO ABASTECIMENTO": "descricao_despesa"
     })
     externo['origem'] = 'Externo'
-    externo = externo[['data', 'placa', 'km', 'litros', 'valor', 'origem', 'combustivel']]
-    
+
+    # Interno (filtrar apenas saídas)
+    interno = interno[interno["Tipo"].str.lower().str.strip() == "saída"].copy()
     interno = interno.rename(columns={
-        "data": "data",
-        "tipo": "tipo",
-        "placa": "placa",
-        "km atual": "km",
-        "quantidade de litros": "litros",
-        "valor total": "valor"
+        "Data": "data",
+        "Placa": "placa",
+        "KM Atual": "km_atual",
+        "Quantidade de litros": "litros",
+        "Descrição Despesa": "descricao_despesa"
     })
-    interno_saida = interno[interno['tipo'].str.lower().str.strip() == 'saída'].copy()
-    interno_saida['origem'] = 'Interno'
-    interno_saida = interno_saida[['data', 'placa', 'km', 'litros', 'valor', 'origem', 'combustivel']]
-    
-    externo = externo[~externo['placa'].str.upper().isin(['-', '', 'CORREÇÃO'])]
-    interno_saida = interno_saida[~interno_saida['placa'].str.upper().isin(['-', '', 'CORREÇÃO'])]
-    
-    df = pd.concat([externo, interno_saida], ignore_index=True)
-    
+    interno['origem'] = 'Interno'
+
+    # Valor pago interno: será preenchido com NaN (não disponível)
+    interno['valor_pago'] = None
+
+    # Unir dados
+    df = pd.concat([externo, interno], ignore_index=True)
+
+    # Padronizar datas e tipos
     df['data'] = pd.to_datetime(df['data'], errors='coerce')
     df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
-    df['km'] = pd.to_numeric(df['km'], errors='coerce')
-    df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
-    
-    df = df.dropna(subset=['data', 'placa', 'litros', 'km'])
-    
+    df['valor_pago'] = pd.to_numeric(df['valor_pago'], errors='coerce')
+    df['descricao_despesa'] = df['descricao_despesa'].str.upper().str.strip()
+
+    # Classificar combustível
+    def classificar_combustivel(desc):
+        if 'DIESEL' in desc:
+            return 'Diesel'
+        elif 'GASOLINA' in desc:
+            return 'Gasolina'
+        elif 'ARLA' in desc:
+            return 'Arla'
+        else:
+            return 'Outros'
+
+    df['combustivel'] = df['descricao_despesa'].apply(classificar_combustivel)
+    df.dropna(subset=['data', 'litros'], inplace=True)
     return df
 
-def calcular_preco_medio_interno(interno_raw):
-    interno = interno_raw.copy()
-    interno.columns = interno.columns.str.strip().str.lower()
-    entradas = interno[interno['tipo'].str.lower().str.strip() == 'entrada'].copy()
-    
-    entradas['valor total'] = pd.to_numeric(entradas.get('valor total', 0), errors='coerce')
-    entradas['quantidade de litros'] = pd.to_numeric(entradas.get('quantidade de litros', 0), errors='coerce')
-    
-    total_valor = entradas['valor total'].sum()
-    total_litros = entradas['quantidade de litros'].sum()
-    preco_medio = total_valor / total_litros if total_litros > 0 else 0
-    return preco_medio
-
-def aplicar_valor_interno(df, preco_medio_interno):
-    df.loc[(df['origem'] == 'Interno') & (df['valor'].isna()), 'valor'] = \
-        df['litros'] * preco_medio_interno
-    return df
-
-def calcular_consumo(df):
-    df = df.sort_values(['placa', 'data']).copy()
-    df['km_anterior'] = df.groupby('placa')['km'].shift(1)
-    df['km_rodado'] = df['km'] - df['km_anterior']
-
-    df = df[(df['km_rodado'] > 0) & (df['litros'] > 0)]
-    df['consumo_km_l'] = df['km_rodado'] / df['litros']
-    return df
 
 def calcular_indicadores_resumo(df):
     total_litros = df['litros'].sum()
-    total_valor = df['valor'].sum()
+    total_valor = df['valor_pago'].sum(min_count=1)  # ignora NaN ao somar
     valor_medio = total_valor / total_litros if total_litros > 0 else 0
-    pct_interno = (df['origem'] == 'Interno').mean()
-    custo_por_km = total_valor / df['km_rodado'].sum() if df['km_rodado'].sum() > 0 else 0
+
+    litros_interno = df[df['origem'] == 'Interno']['litros'].sum()
+    pct_interno = litros_interno / total_litros if total_litros > 0 else 0
+
     return {
         'total_litros': total_litros,
         'total_valor': total_valor,
         'valor_medio': valor_medio,
-        'pct_interno': pct_interno,
-        'custo_por_km': custo_por_km
+        'pct_interno': pct_interno
     }
 
-def calcular_ranking_eficiencia(df):
-    consumo = df.groupby('placa').agg({
-        'km_rodado': 'sum',
-        'litros': 'sum'
-    }).reset_index()
-    consumo['km_litro'] = consumo['km_rodado'] / consumo['litros']
-    consumo = consumo.sort_values(by='km_litro', ascending=False)
+
+def preparar_dados_tendencia(df):
+    df['ano_mes'] = df['data'].dt.to_period("M").astype(str)
+    tendencia = df.groupby(['ano_mes', 'origem'])['litros'].sum().reset_index()
+    return tendencia
+
+
+def calcular_consumo_medio(df):
+    consumo = df.dropna(subset=["placa", "km_atual"]).copy()
+    consumo = consumo.sort_values(["placa", "data"])
+
+    consumo['km_rodado'] = consumo.groupby('placa')['km_atual'].diff()
+    consumo['litros_consumidos'] = consumo['litros']
+
+    consumo = consumo[consumo['km_rodado'] > 0]
+    consumo['km_por_litro'] = consumo['km_rodado'] / consumo['litros_consumidos']
+    consumo = consumo.dropna(subset=['km_por_litro'])
+
     return consumo
-
-def preparar_estoque_tanque(interno_raw):
-    interno = interno_raw.copy()
-    interno.columns = interno.columns.str.strip().str.lower()
-
-    entradas = interno[interno['tipo'].str.lower().str.strip() == 'entrada'].copy()
-
-    entradas = entradas.rename(columns={
-        "data": "data",
-        "quantidade de litros": "litros",
-        "medidor do tanque atual": "medidor",
-        "soma do medidor + litros": "soma_medidor"
-    })
-
-    entradas['data'] = pd.to_datetime(entradas['data'], errors='coerce')
-    entradas['litros'] = pd.to_numeric(entradas['litros'], errors='coerce')
-    entradas['medidor'] = pd.to_numeric(entradas['medidor'], errors='coerce')
-    entradas['soma_medidor'] = pd.to_numeric(entradas['soma_medidor'], errors='coerce')
-
-    entradas = entradas.dropna(subset=['data'])
-    return entradas[['data', 'litros', 'medidor', 'soma_medidor']]
