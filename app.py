@@ -3,121 +3,67 @@ import pandas as pd
 import plotly.express as px
 from utils import (
     carregar_dados,
-    preparar_dados,
-    calcular_preco_medio_interno,
-    aplicar_valor_interno,
-    calcular_consumo,
     calcular_indicadores_resumo,
-    calcular_ranking_eficiencia,
-    preparar_estoque_tanque,
+    preparar_dados_tendencia,
+    calcular_consumo_medio,
 )
 
-st.set_page_config(page_title="Dashboard de Abastecimento", layout="wide")
-st.title("⛽ Dashboard de Abastecimento - Frota")
+st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
 
-# Upload do arquivo
-st.sidebar.header("📂 Importar Planilha")
-arquivo = st.sidebar.file_uploader("Selecione o arquivo Excel (.xlsx)", type="xlsx")
+st.title("⛽ Dashboard de Abastecimento de Frota")
 
-if arquivo:
-    externo_raw, interno_raw = carregar_dados(arquivo)
-    preco_medio_interno = calcular_preco_medio_interno(interno_raw)
+uploaded_file = st.sidebar.file_uploader("📤 Envie a planilha (.xlsx)", type=["xlsx"])
 
-    df_base = preparar_dados(externo_raw, interno_raw)
-    df_base = aplicar_valor_interno(df_base, preco_medio_interno)
-    df_base = calcular_consumo(df_base)
-
-    # Filtro por período
-    st.sidebar.header("📅 Filtrar por Período")
-    min_data = df_base['data'].min()
-    max_data = df_base['data'].max()
-    data_inicio, data_fim = st.sidebar.date_input(
-        "Selecione o intervalo",
-        [min_data, max_data],
-        min_value=min_data,
-        max_value=max_data
-    )
-    df_base = df_base[(df_base['data'] >= pd.to_datetime(data_inicio)) & (df_base['data'] <= pd.to_datetime(data_fim))]
+if uploaded_file:
+    df = carregar_dados(uploaded_file)
 
     # Filtros globais
-    st.sidebar.header("🔎 Filtros")
-    placas_validas = sorted(df_base['placa'].dropna().unique())
-    placa_sel = st.sidebar.multiselect("Filtrar por placa", placas_validas, default=placas_validas)
+    placas = df['placa'].dropna().unique()
+    combustiveis = df['combustivel'].unique()
 
-    tipo_sel = st.sidebar.multiselect("Tipo de abastecimento", ['Interno', 'Externo'], default=['Interno', 'Externo'])
+    placa_filtro = st.sidebar.multiselect("🔎 Filtrar por Placa", placas, default=placas)
+    combustivel_filtro = st.sidebar.multiselect("⛽ Tipo de Combustível", combustiveis, default=combustiveis)
 
-    combustiveis_validos = sorted(df_base['combustivel'].dropna().unique())
-    combustivel_sel = st.sidebar.multiselect("Filtrar por combustível", combustiveis_validos, default=combustiveis_validos)
+    df = df[df['placa'].isin(placa_filtro)]
+    df = df[df['combustivel'].isin(combustivel_filtro)]
 
-    df_filtro = df_base[
-        (df_base['placa'].isin(placa_sel)) &
-        (df_base['origem'].isin(tipo_sel)) &
-        (df_base['combustivel'].isin(combustivel_sel))
-    ]
+    aba = st.selectbox("📂 Escolha uma aba", [
+        "📊 Resumo Geral",
+        "🏆 Top Veículos",
+        "📈 Tendência de Abastecimento",
+        "⛽ Consumo Médio"
+    ])
 
-    abas = st.tabs(["📊 Resumo Geral", "🏅 Ranking de Eficiência", "📈 Tendência de Abastecimento", "⛽ Estoque do Tanque"])
+    if aba == "📊 Resumo Geral":
+        indicadores = calcular_indicadores_resumo(df)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("🔧 Total de Litros", f"{indicadores['total_litros']:.0f} L")
+        col2.metric("💸 Total Gasto (apenas externo)", f"R$ {indicadores['total_valor']:.2f}")
+        col3.metric("💰 Valor Médio por Litro", f"R$ {indicadores['valor_medio']:.2f}")
+        col4.metric("🏭 % Interno", f"{indicadores['pct_interno']*100:.1f}%")
 
-    # Aba 1: Resumo Geral
-    with abas[0]:
-        st.subheader("📊 Indicadores Gerais")
-        indicadores = calcular_indicadores_resumo(df_filtro)
+    elif aba == "🏆 Top Veículos":
+        top_veiculos = df.groupby('placa')['litros'].sum().sort_values(ascending=False).head(10).reset_index()
+        fig = px.bar(top_veiculos, x='placa', y='litros', title="Top 10 Veículos por Litros Abastecidos")
+        st.plotly_chart(fig, use_container_width=True)
 
-        col1, col2, col3, col4, col5 = st.columns(5)
-        col1.metric("🚛 Total de Litros", f"{indicadores['total_litros']:.0f} L")
-        col2.metric("💰 Valor Total", f"R$ {indicadores['total_valor']:.2f}")
-        col3.metric("⚖️ Valor Médio por Litro", f"R$ {indicadores['valor_medio']:.2f}")
-        col4.metric("🏷️ % Interno", f"{indicadores['pct_interno']*100:.0f}%")
-        col5.metric("💸 Custo por KM", f"R$ {indicadores['custo_por_km']:.4f}")
-
-        st.divider()
-        st.subheader("📌 Abastecimentos por Origem")
-        df_origem = df_filtro.groupby('origem')['litros'].sum().reset_index()
-        fig_origem = px.pie(df_origem, names='origem', values='litros', hole=0.4, title="Distribuição por Origem")
-        st.plotly_chart(fig_origem, use_container_width=True)
-
-    # Aba 2: Ranking de Eficiência
-    with abas[1]:
-        st.subheader("🏅 Ranking de Consumo Médio (km/l)")
-        df_rank = calcular_ranking_eficiencia(df_filtro)
-        st.dataframe(df_rank, use_container_width=True)
-
-        fig_rank = px.bar(df_rank, x='placa', y='km_litro', text_auto='.2f', title="Ranking de Eficiência")
-        fig_rank.update_layout(xaxis_title="Placa", yaxis_title="km/l")
-        st.plotly_chart(fig_rank, use_container_width=True)
-
-    # Aba 3: Tendência
-    with abas[2]:
-        st.subheader("📈 Evolução Mensal dos Abastecimentos")
-        df_mes = df_filtro.copy()
-        df_mes['ano_mes'] = df_mes['data'].dt.to_period('M').astype(str)
-        tendencia = df_mes.groupby(['ano_mes', 'origem'])['litros'].sum().reset_index()
-
+    elif aba == "📈 Tendência de Abastecimento":
+        tendencia = preparar_dados_tendencia(df)
         fig_tendencia = px.bar(
             tendencia,
             x='ano_mes',
             y='litros',
             color='origem',
-            barmode='group',
+            barmode='stack',
+            text_auto='.0f',
             title="Litros Abastecidos por Mês"
         )
+        fig_tendencia.update_layout(xaxis_title="Mês", yaxis_title="Litros Abastecidos")
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
-    # Aba 4: Estoque Tanque
-    with abas[3]:
-        st.subheader("⛽ Histórico de Entradas no Tanque (Reservatório)")
-        df_tanque = preparar_estoque_tanque(interno_raw)
-
-        col5, col6 = st.columns(2)
-        with col5:
-            fig_ent = px.line(df_tanque, x='data', y='litros', title="Entradas de Litros no Tanque")
-            st.plotly_chart(fig_ent, use_container_width=True)
-
-        with col6:
-            fig_med = px.line(df_tanque, x='data', y='medidor', title="Medidor do Tanque")
-            st.plotly_chart(fig_med, use_container_width=True)
-
-        st.divider()
-        st.dataframe(df_tanque[['data', 'litros', 'medidor', 'soma_medidor']], use_container_width=True)
-
-else:
-    st.info("Faça o upload da planilha para começar a análise.")
+    elif aba == "⛽ Consumo Médio":
+        consumo = calcular_consumo_medio(df)
+        media = consumo.groupby('placa')['km_por_litro'].mean().sort_values(ascending=False).reset_index()
+        fig = px.bar(media, x='placa', y='km_por_litro', title="Consumo Médio (km/l)")
+        fig.update_layout(xaxis_title="Placa", yaxis_title="km/l")
+        st.plotly_chart(fig, use_container_width=True)
