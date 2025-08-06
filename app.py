@@ -5,7 +5,7 @@ from utils import (
     carregar_dados,
     preparar_dados,
     calcular_consumo,
-    calcular_preco_medio_interno
+    calcular_preco_medio
 )
 
 st.set_page_config(page_title="Dashboard de Abastecimento", layout="wide")
@@ -19,7 +19,7 @@ if arquivo:
     externo, interno = carregar_dados(arquivo)
     df = preparar_dados(externo, interno)
     consumo = calcular_consumo(df)
-    preco_medio_interno = calcular_preco_medio_interno(interno)
+    preco_medio_interno = calcular_preco_medio(interno)
 
     # Filtros globais
     placas_validas = df['placa'].dropna().unique()
