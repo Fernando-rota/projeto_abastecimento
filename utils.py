@@ -46,12 +46,28 @@ def processar_planilha(arquivo):
 
 
 def calcular_consumo(df):
+    df = df.copy()
+
+    # Garante que km_atual e litros sejam numéricos
+    df['km_atual'] = pd.to_numeric(df['km_atual'], errors='coerce')
+    df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
+
+    # Remove linhas com valores nulos em km_atual ou litros
+    df.dropna(subset=['km_atual', 'litros'], inplace=True)
+
+    # Ordena e calcula km rodado
     df = df.sort_values(['placa', 'data']).copy()
     df['km_anterior'] = df.groupby('placa')['km_atual'].shift(1)
     df['km_rodado'] = df['km_atual'] - df['km_anterior']
+
+    # Filtra km e litros válidos
     df = df[(df['km_rodado'] > 0) & (df['litros'] > 0)]
+
+    # Calcula consumo
     df['consumo_km_l'] = df['km_rodado'] / df['litros']
+
     return df
+
 
 
 def indicadores_resumo(df):
