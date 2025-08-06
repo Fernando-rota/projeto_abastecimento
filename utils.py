@@ -1,118 +1,107 @@
 import pandas as pd
-import plotly.express as px
-import streamlit as st
 
+def carregar_dados(xls):
+    """Carrega as duas abas principais da planilha"""
+    externo = pd.read_excel(xls, sheet_name='Abastecimento Externo')
+    interno = pd.read_excel(xls, sheet_name='Abastecimento Interno')
+    return externo, interno
 
-@st.cache_data
-def processar_planilha(arquivo):
-    try:
-        xls = pd.ExcelFile(arquivo)
-        externo = pd.read_excel(xls, "Abastecimento Externo")
-        interno = pd.read_excel(xls, "Abastecimento Interno")
-    except Exception as e:
-        st.error(f"Erro ao ler a planilha: {e}")
-        return pd.DataFrame()
+def preparar_dados(externo_raw, interno_raw):
+    """Limpa, filtra e padroniza os dados de abastecimento"""
 
-    externo['tipo'] = 'Externo'
-    interno['tipo'] = interno.get('Tipo', '').fillna('Saída')
-    interno = interno[interno['tipo'].str.lower().str.contains('saída', na=False)]
-
-    renomear = {
+    # 🔷 Abastecimento Externo
+    externo = externo_raw.copy()
+    externo = externo.rename(columns={
         'Data': 'data',
         'Placa': 'placa',
         'Quantidade de litros': 'litros',
-        'Valor Unitario': 'valor_unit',
+        'Valor Unitario': 'valor_unitario',
         'Valor Total': 'valor_total',
         'KM Atual': 'km_atual'
-    }
+    })
+    externo['origem'] = 'Externo'
+    externo = externo[['data', 'placa', 'litros', 'valor_unitario', 'valor_total', 'km_atual', 'origem']]
+    externo = externo.dropna(subset=['placa', 'litros'])
 
-    externo = externo.rename(columns=renomear)
-    interno = interno.rename(columns=renomear)
+    # 🔶 Abastecimento Interno (somente "Saída")
+    interno = interno_raw.copy()
+    interno = interno[interno['Tipo'].str.lower() == 'saída'].copy()
+    interno = interno.rename(columns={
+        'Data': 'data',
+        'Placa': 'placa',
+        'Quantidade de litros': 'litros',
+        'Valor Unitario': 'valor_unitario',
+        'Valor Total': 'valor_total',
+        'KM Atual': 'km_atual'
+    })
+    interno['origem'] = 'Interno'
+    interno = interno[['data', 'placa', 'litros', 'valor_unitario', 'valor_total', 'km_atual', 'origem']]
+    interno = interno.dropna(subset=['placa', 'litros'])
 
-    interno['valor_unit'] = interno.get('valor_unit') \
-        .fillna(interno['valor_total'] / interno['litros'])
+    # 🚫 Remover placas inválidas
+    placas_invalidas = ['-', 'correção']
+    externo = externo[~externo['placa'].str.lower().isin(placas_invalidas)]
+    interno = interno[~interno['placa'].str.lower().isin(placas_invalidas)]
 
-    for df in [externo, interno]:
-        df['data'] = pd.to_datetime(df['data'], errors='coerce')
-        df.dropna(subset=['data'], inplace=True)
-
-    colunas = ['data', 'placa', 'litros', 'valor_unit', 'valor_total', 'km_atual', 'tipo']
-    df = pd.concat([externo[colunas], interno[colunas]], ignore_index=True)
-
-    df['placa'] = df['placa'].astype(str).str.upper().str.strip()
-    df = df[~df['placa'].isin(['-', '', 'CORREÇÃO'])]
+    # 🔄 Unificar
+    df = pd.concat([externo, interno], ignore_index=True)
+    df['data'] = pd.to_datetime(df['data'], errors='coerce')
+    df['ano_mes'] = df['data'].dt.to_period('M')
+    df = df.dropna(subset=['data', 'litros', 'valor_unitario'])
+    df = df.sort_values(by=['placa', 'data'])
 
     return df
-
 
 def calcular_consumo(df):
+    """Calcula km rodado e consumo médio por veículo"""
     df = df.copy()
-
-    # Garante que km_atual e litros sejam numéricos
-    df['km_atual'] = pd.to_numeric(df['km_atual'], errors='coerce')
-    df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
-
-    # Remove linhas com valores nulos em km_atual ou litros
-    df.dropna(subset=['km_atual', 'litros'], inplace=True)
-
-    # Ordena e calcula km rodado
-    df = df.sort_values(['placa', 'data']).copy()
     df['km_anterior'] = df.groupby('placa')['km_atual'].shift(1)
     df['km_rodado'] = df['km_atual'] - df['km_anterior']
-
-    # Filtra km e litros válidos
-    df = df[(df['km_rodado'] > 0) & (df['litros'] > 0)]
-
-    # Calcula consumo
-    df['consumo_km_l'] = df['km_rodado'] / df['litros']
-
+    df['km_litro'] = df['km_rodado'] / df['litros']
     return df
 
-
-
-def indicadores_resumo(df):
+def calcular_indicadores_resumo(df):
+    """Indicadores agregados para o painel principal"""
     total_litros = df['litros'].sum()
-    total_gasto = df['valor_total'].sum()
-    df_consumo = calcular_consumo(df)
-    media_consumo = df_consumo['consumo_km_l'].mean()
-    return round(total_litros, 2), round(total_gasto, 2), round(media_consumo, 2)
+    total_valor = df['valor_total'].sum()
+    valor_medio = df['valor_unitario'].mean()
+    total_abastecimentos = df.shape[0]
+    interno_pct = (df['origem'] == 'Interno').mean()
 
+    return {
+        'total_litros': total_litros,
+        'total_valor': total_valor,
+        'valor_medio': valor_medio,
+        'total_abastecimentos': total_abastecimentos,
+        'pct_interno': interno_pct
+    }
 
-def ranking_eficiencia(df_consumo):
-    return df_consumo.groupby('placa')['consumo_km_l'].mean().reset_index().round(2).sort_values(by='consumo_km_l', ascending=False)
-
-
-def gerar_graficos(df_filtrado, df_consumo):
-    col1, col2 = st.columns(2)
-
-    with col1:
-        fig1 = px.bar(
-            df_filtrado,
-            x='data',
-            y='litros',
-            color='tipo',
-            title="⛽ Litros Abastecidos ao Longo do Tempo",
-            labels={'litros': 'Litros', 'data': 'Data'}
-        )
-        st.plotly_chart(fig1, use_container_width=True)
-
-    with col2:
-        fig2 = px.box(
-            df_filtrado,
-            x='placa',
-            y='valor_unit',
-            color='tipo',
-            title="💸 Valor por Litro por Veículo",
-            labels={'valor_unit': 'Valor Unitário (R$)'}
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-    fig3 = px.line(
-        df_consumo,
-        x='data',
-        y='consumo_km_l',
-        color='placa',
-        title="📉 Tendência de Consumo (km/L)",
-        labels={'consumo_km_l': 'Consumo (km/L)', 'data': 'Data'}
+def calcular_ranking_eficiencia(df):
+    """Ranking de consumo médio por placa"""
+    df_valid = df.dropna(subset=['km_litro', 'km_rodado'])
+    ranking = (
+        df_valid.groupby('placa')
+        .agg({
+            'km_rodado': 'sum',
+            'litros': 'sum'
+        })
+        .assign(km_litro=lambda x: x['km_rodado'] / x['litros'])
+        .sort_values(by='km_litro', ascending=False)
+        .reset_index()
     )
-    st.plotly_chart(fig3, use_container_width=True)
+    return ranking
+
+def preparar_estoque_tanque(interno_raw):
+    """Dados de entrada de diesel no tanque (Tipo == Entrada)"""
+    entrada = interno_raw.copy()
+    entrada = entrada[entrada['Tipo'].str.lower() == 'entrada']
+    entrada = entrada.rename(columns={
+        'Data': 'data',
+        'Quantidade de litros': 'litros',
+        'Medidor do tanque atual': 'medidor',
+        'Soma do medidor + litros': 'soma_medidor'
+    })
+    entrada['data'] = pd.to_datetime(entrada['data'], errors='coerce')
+    entrada = entrada.dropna(subset=['data', 'litros'])
+    entrada = entrada.sort_values(by='data')
+    return entrada
