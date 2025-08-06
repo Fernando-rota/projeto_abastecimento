@@ -15,7 +15,7 @@ from utils import (
 st.set_page_config(page_title="Dashboard de Abastecimento", layout="wide")
 st.title("⛽ Dashboard de Abastecimento - Frota")
 
-# === Upload ===
+# Upload do arquivo
 st.sidebar.header("📂 Importar Planilha")
 arquivo = st.sidebar.file_uploader("Selecione o arquivo Excel (.xlsx)", type="xlsx")
 
@@ -27,7 +27,7 @@ if arquivo:
     df_base = aplicar_valor_interno(df_base, preco_medio_interno)
     df_base = calcular_consumo(df_base)
 
-    # === Filtro período ===
+    # Filtro por período
     st.sidebar.header("📅 Filtrar por Período")
     min_data = df_base['data'].min()
     max_data = df_base['data'].max()
@@ -39,21 +39,25 @@ if arquivo:
     )
     df_base = df_base[(df_base['data'] >= pd.to_datetime(data_inicio)) & (df_base['data'] <= pd.to_datetime(data_fim))]
 
-    # === Filtros globais ===
+    # Filtros globais
     st.sidebar.header("🔎 Filtros")
     placas_validas = sorted(df_base['placa'].dropna().unique())
     placa_sel = st.sidebar.multiselect("Filtrar por placa", placas_validas, default=placas_validas)
 
     tipo_sel = st.sidebar.multiselect("Tipo de abastecimento", ['Interno', 'Externo'], default=['Interno', 'Externo'])
 
+    combustiveis_validos = sorted(df_base['combustivel'].dropna().unique())
+    combustivel_sel = st.sidebar.multiselect("Filtrar por combustível", combustiveis_validos, default=combustiveis_validos)
+
     df_filtro = df_base[
         (df_base['placa'].isin(placa_sel)) &
-        (df_base['origem'].isin(tipo_sel))
+        (df_base['origem'].isin(tipo_sel)) &
+        (df_base['combustivel'].isin(combustivel_sel))
     ]
 
     abas = st.tabs(["📊 Resumo Geral", "🏅 Ranking de Eficiência", "📈 Tendência de Abastecimento", "⛽ Estoque do Tanque"])
 
-    # === Aba 1: Resumo Geral ===
+    # Aba 1: Resumo Geral
     with abas[0]:
         st.subheader("📊 Indicadores Gerais")
         indicadores = calcular_indicadores_resumo(df_filtro)
@@ -71,7 +75,7 @@ if arquivo:
         fig_origem = px.pie(df_origem, names='origem', values='litros', hole=0.4, title="Distribuição por Origem")
         st.plotly_chart(fig_origem, use_container_width=True)
 
-    # === Aba 2: Ranking de Eficiência ===
+    # Aba 2: Ranking de Eficiência
     with abas[1]:
         st.subheader("🏅 Ranking de Consumo Médio (km/l)")
         df_rank = calcular_ranking_eficiencia(df_filtro)
@@ -81,7 +85,7 @@ if arquivo:
         fig_rank.update_layout(xaxis_title="Placa", yaxis_title="km/l")
         st.plotly_chart(fig_rank, use_container_width=True)
 
-    # === Aba 3: Tendência ===
+    # Aba 3: Tendência
     with abas[2]:
         st.subheader("📈 Evolução Mensal dos Abastecimentos")
         df_mes = df_filtro.copy()
@@ -98,7 +102,7 @@ if arquivo:
         )
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
-    # === Aba 4: Estoque Tanque ===
+    # Aba 4: Estoque Tanque
     with abas[3]:
         st.subheader("⛽ Histórico de Entradas no Tanque (Reservatório)")
         df_tanque = preparar_estoque_tanque(interno_raw)
