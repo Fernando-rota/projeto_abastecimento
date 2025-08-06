@@ -40,15 +40,17 @@ def carregar_dados(xls):
     df['descricao_despesa'] = df['descricao_despesa'].str.upper().str.strip()
 
     # Classificar combustível
-    def classificar_combustivel(desc):
-        if 'DIESEL' in desc:
-            return 'Diesel'
-        elif 'GASOLINA' in desc:
-            return 'Gasolina'
-        elif 'ARLA' in desc:
-            return 'Arla'
-        else:
-            return 'Outros'
+  def classificar_combustivel(x):
+    x = str(x).lower()
+    if 'gasolina' in x:
+        return 'Gasolina Comum'
+    elif 'arla' in x:
+        return 'Arla'
+    elif 'diesel' in x or 'óleo' in x:
+        return 'Diesel Comum'
+    else:
+        return 'Outros'
+
 
     df['combustivel'] = df['descricao_despesa'].apply(classificar_combustivel)
     df.dropna(subset=['data', 'litros'], inplace=True)
