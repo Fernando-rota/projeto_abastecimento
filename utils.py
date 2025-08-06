@@ -1,73 +1,87 @@
 import pandas as pd
 
-def carregar_dados(arquivo):
-    xls = pd.ExcelFile(arquivo)
+def carregar_dados(caminho_arquivo):
+    xls = pd.ExcelFile(caminho_arquivo)
     externo = pd.read_excel(xls, "Abastecimento Externo")
     interno = pd.read_excel(xls, "Abastecimento Interno")
-    return externo, interno
+    compras = pd.read_excel(xls, "Combustível")  # aba de entrada de diesel
 
-def preparar_dados(externo, interno):
-    # Padronização das colunas
-    externo = externo.rename(columns={
-        'DATA': 'data',
-        'PLACA': 'placa',
-        'KM ATUAL': 'km',
-        'CONSUMO': 'litros',
-        'VALOR PAGO': 'valor',
-        'DESCRIÇÃO DO ABASTECIMENTO': 'descricao',
-        'DESCRIÇÃO DESPESA': 'combustivel',
-    })
+    # Padronizar colunas
+    externo.columns = externo.columns.str.lower().str.strip()
+    interno.columns = interno.columns.str.lower().str.strip()
+    compras.columns = compras.columns.str.lower().str.strip()
 
-    interno = interno.rename(columns={
-        'Data': 'data',
-        'Placa': 'placa',
-        'KM Atual': 'km',
-        'Quantidade de litros': 'litros',
-        'Tipo': 'tipo',
-        'Descrição Despesa': 'combustivel',
-    })
+    return externo, interno, compras
 
-    # Remover linhas de entrada do reservatório no interno
-    interno['tipo'] = interno['tipo'].astype(str).str.lower().str.strip()
-    interno_saida = interno[interno['tipo'] == 'saída']
 
-    # Acrescentar campos que o externo tem
-    interno_saida['valor'] = None
-    interno_saida['origem'] = 'Interno'
-    externo['origem'] = 'Externo'
+def preparar_dados(externo, interno, compras):
+    # Renomear colunas principais
+    if 'data' not in externo.columns and 'data do abastecimento' in externo.columns:
+        externo.rename(columns={'data do abastecimento': 'data'}, inplace=True)
+    if 'data' not in interno.columns and 'data do abastecimento' in interno.columns:
+        interno.rename(columns={'data do abastecimento': 'data'}, inplace=True)
+    if 'emissao' in compras.columns:
+        compras.rename(columns={'emissao': 'data'}, inplace=True)
 
-    # Normalizar campos
+    # Converter para datetime
     externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
-    interno_saida['data'] = pd.to_datetime(interno_saida['data'], errors='coerce')
+    interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
+    compras['data'] = pd.to_datetime(compras['data'], errors='coerce')
 
-    externo = externo[['data', 'placa', 'km', 'litros', 'valor', 'origem', 'combustivel']]
-    interno_saida = interno_saida[['data', 'placa', 'km', 'litros', 'valor', 'origem', 'combustivel']]
+    # Corrigir nomes
+    if 'quantidade de litros' in externo.columns:
+        externo.rename(columns={'quantidade de litros': 'litros'}, inplace=True)
+    if 'quantidade de litros' in interno.columns:
+        interno.rename(columns={'quantidade de litros': 'litros'}, inplace=True)
+    if 'quantidade' in compras.columns:
+        compras.rename(columns={'quantidade': 'litros'}, inplace=True)
+    if 'valor pago' not in externo.columns and 'custo total' in externo.columns:
+        externo.rename(columns={'custo total': 'valor pago'}, inplace=True)
 
-    df_base = pd.concat([externo, interno_saida], ignore_index=True)
-    df_base = df_base.dropna(subset=['data', 'placa', 'litros'])
+    # Corrigir tipos de combustível
+    externo['combustivel'] = externo['descricao despesa'].str.upper().str.extract(r'(DIESEL COMUM|GASOLINA COMUM|ARLA)', expand=False).fillna('OUTRO')
+    interno['combustivel'] = interno['descricao despesa'].str.upper().str.extract(r'(DIESEL COMUM|GASOLINA COMUM|ARLA)', expand=False).fillna('OUTRO')
+    compras['combustivel'] = compras['descricao despesa'].str.upper().str.extract(r'(DIESEL COMUM|GASOLINA COMUM|ARLA)', expand=False).fillna('OUTRO')
 
-    df_base['combustivel'] = df_base['combustivel'].astype(str).str.upper().str.strip()
-    df_base['mes'] = df_base['data'].dt.to_period("M").dt.to_timestamp()
-    df_base['valor'] = pd.to_numeric(df_base['valor'], errors='coerce')
-    df_base['litros'] = pd.to_numeric(df_base['litros'], errors='coerce')
-    df_base['km'] = pd.to_numeric(df_base['km'], errors='coerce')
-    df_base = df_base[df_base['placa'].str.strip().str.upper() != '-']
+    # Tag origem
+    externo['origem'] = 'Externo'
+    interno['origem'] = 'Interno'
 
-    return df_base
+    # Unificar placas e remover entradas '-'
+    externo['placa'] = externo['placa'].astype(str).str.strip().str.upper()
+    interno['placa'] = interno['placa'].astype(str).str.strip().str.upper()
+    compras['placa'] = compras.get('placa', '-')
+    compras['placa'] = compras['placa'].astype(str).str.strip().str.upper()
 
-def calcular_consumo(df):
-    consumo = df.copy()
-    consumo = consumo.sort_values(by=['placa', 'data'])
+    return externo, interno, compras
 
-    consumo['km_anterior'] = consumo.groupby('placa')['km'].shift(1)
-    consumo['km_rodado'] = consumo['km'] - consumo['km_anterior']
-    consumo['km_litro'] = consumo['km_rodado'] / consumo['litros']
-    consumo = consumo[consumo['km_rodado'] > 0]
 
-    return consumo
+def calcular_consumo(externo, interno):
+    # Agrupar por placa
+    consumo_ext = externo.groupby('placa')['litros'].sum().reset_index(name='litros_externo')
+    consumo_int = interno[~(interno['placa'].isin(['-', 'CORREÇÃO']))].groupby('placa')['litros'].sum().reset_index(name='litros_interno')
 
-def calcular_preco_medio_interno(interno):
-    interno['tipo'] = interno['tipo'].astype(str).str.lower().str.strip()
-    entradas = interno[interno['tipo'] == 'entrada']
-    entradas['valor unitario'] = entradas['Custo Total'] / entradas['Quantidade de litros']
-    return entradas['valor unitario'].mean()
+    # Juntar dados
+    df = pd.merge(consumo_ext, consumo_int, on='placa', how='outer').fillna(0)
+    df['total'] = df['litros_externo'] + df['litros_interno']
+    df['% externo'] = (df['litros_externo'] / df['total'] * 100).round(1)
+    df['% interno'] = (df['litros_interno'] / df['total'] * 100).round(1)
+
+    return df
+
+
+def calcular_preco_medio(compras):
+    # Considerar apenas entradas de diesel (placa == '-')
+    diesel = compras[
+        (compras['placa'] == '-') &
+        (compras['combustivel'] == 'DIESEL COMUM')
+    ]
+
+    if 'valor pago' in diesel.columns:
+        diesel = diesel[diesel['litros'] > 0]
+        diesel['preco_litro'] = diesel['valor pago'] / diesel['litros']
+        preco_medio = diesel['preco_litro'].mean()
+    else:
+        preco_medio = 0.0
+
+    return round(preco_medio, 3)
