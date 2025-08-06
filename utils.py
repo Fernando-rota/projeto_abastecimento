@@ -1,33 +1,32 @@
-import pandas as pd
-
-def carregar_dados(arquivo):
-    xls = pd.ExcelFile(arquivo)
-    
-    # Carregar abas
-    externo = pd.read_excel(xls, "Abastecimento Externo")
-    interno = pd.read_excel(xls, "Abastecimento Interno")
-    
-    # Padronizar nomes de colunas
+def preparar_dados(externo, interno):
     externo = externo.rename(columns={
-        'Data': 'data',
-        'Placa': 'placa',
-        'KM Atual': 'km',
-        'Quantidade de litros': 'litros',
-        'Valor Total': 'valor'
+        'data': 'data',
+        'placa': 'placa',
+        'km': 'km',
+        'litros': 'litros',
+        'valor': 'valor',
+        'origem': 'origem'
     })
 
-    externo['origem'] = 'Externo'
-
-    # Abastecimentos internos só com "Saída"
-    interno = interno[interno['Tipo'].str.lower() == 'saída'].copy()
     interno = interno.rename(columns={
-        'Data': 'data',
-        'Placa': 'placa',
-        'KM Atual': 'km',
-        'Quantidade de litros': 'litros',
-        'Valor Total': 'valor'
+        'data': 'data',
+        'placa': 'placa',
+        'km': 'km',
+        'litros': 'litros',
+        'valor': 'valor',
+        'origem': 'origem'
     })
 
-    interno['origem'] = 'Interno'
+    df = pd.concat([externo, interno], ignore_index=True)
 
-    return externo, interno
+    # Conversões e limpeza
+    df['data'] = pd.to_datetime(df['data'], errors='coerce')
+    df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
+    df['km'] = pd.to_numeric(df['km'], errors='coerce')
+    df['valor'] = pd.to_numeric(df['valor'], errors='coerce')
+    df = df.dropna(subset=['data', 'placa'])
+
+    # Remove placas inválidas
+    df = df[~df['placa'].str.upper().isin(['-', '', 'CORREÇÃO'])]
+
+    return df
