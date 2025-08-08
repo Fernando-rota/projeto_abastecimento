@@ -26,7 +26,7 @@ def limpar_valor_monetario(valor):
     if isinstance(valor, (int, float)):
         return float(valor)
     valor_str = str(valor)
-    # remove R$ espaços e pontos. troca vírgula por ponto
+    # remove R$, espaços e pontos; troca vírgula por ponto
     valor_limpo = re.sub(r"[R$\s\.]", "", valor_str)
     valor_limpo = valor_limpo.replace(",", ".")
     try:
@@ -49,13 +49,14 @@ def calcular_consumo_medio_simples(df, por_combustivel=False):
         return pd.DataFrame(columns=cols)
 
     dff = df.copy()
-    # Padroniza
     dff["placa"] = dff["placa"].astype(str).str.upper().str.strip()
     dff["km_atual"] = pd.to_numeric(dff.get("km_atual"), errors="coerce")
     dff["quantidade_de_litros"] = pd.to_numeric(dff.get("quantidade_de_litros"), errors="coerce")
     if "tipo_combustivel" in dff.columns:
         dff["tipo_combustivel"] = dff["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
-    # Remove registros inválidos
+    else:
+        dff["tipo_combustivel"] = "N/A"
+
     dff = dff.dropna(subset=["placa", "km_atual", "quantidade_de_litros"])
     dff = dff[dff["quantidade_de_litros"] > 0]
 
@@ -64,10 +65,9 @@ def calcular_consumo_medio_simples(df, por_combustivel=False):
         group_cols = ["placa", "tipo_combustivel"]
 
     for group_key, grupo in dff.groupby(group_cols):
-        # group_key pode ser string ou tupla
         if isinstance(group_key, tuple):
             placa = group_key[0]
-            tipo = group_key[1]
+            tipo = group_key[1] if len(group_key) > 1 else None
         else:
             placa = group_key
             tipo = grupo["tipo_combustivel"].iloc[0] if "tipo_combustivel" in grupo.columns else None
@@ -97,7 +97,6 @@ def calcular_consumo_medio_simples(df, por_combustivel=False):
     df_res = pd.DataFrame(resultados)
     if df_res.empty:
         return df_res
-    # Ordena do maior para o menor consumo
     df_res = df_res.sort_values("consumo_medio_km_l", ascending=False).reset_index(drop=True)
     return df_res
 
@@ -318,14 +317,4 @@ with tabs[4]:
             if consumo is not None:
                 st.write(f"- Consumo médio = (km_final - km_inicial) / total_litros = `{consumo:.9f}` km/l")
             else:
-                st.warning("Não foi possível calcular (verifique se há pelo menos 2 registros com km distintos e litros > 0).")
-
-# Explanatory expander
-with st.expander("Como esse cálculo funciona (detalhes técnicos)"):
-    st.markdown("""
-    - Estamos usando **KM mínimo** e **KM máximo** dentro do período/filtragem aplicados.
-    - Soma-se **todos** os litros abastecidos nesse mesmo conjunto de registros.
-    - Fórmula: **(KM máximo - KM mínimo) / Soma dos litros**.
-    - Essa abordagem dá uma visão **média geral do período**, menos sensível a flutuações por abastecimentos parciais.
-    - Se quiser uma granularidade por tipo de combustível, posso ativar `por_combustivel=True` para agrupar também por tipo.
-    """)
+                st.warning("Não foi possível
