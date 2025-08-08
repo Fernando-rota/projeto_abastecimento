@@ -317,4 +317,7 @@ with tabs[4]:
             if consumo is not None:
                 st.write(f"- Consumo médio = (km_final - km_inicial) / total_litros = `{consumo:.9f}` km/l")
             else:
-                st.warning("Não foi possível
+                st.warning("Não foi possível calcular o consumo médio para esta placa com os dados fornecidos.")
+    else:
+        st.info("Digite uma placa para checar o cálculo detalhado.")
+
