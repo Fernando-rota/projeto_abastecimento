@@ -25,7 +25,7 @@ arquivo = st.file_uploader("📂 Envie a planilha de abastecimento (com abas 'in
 
 def calcula_consumo_medio(df):
     if not {"placa", "km atual", "quantidade de litros"}.issubset(df.columns):
-        return pd.DataFrame(columns=["placa", "tipo combustivel", "consumo médio (km/l)"])
+        return pd.DataFrame(columns=["placa", "descrição despesa", "consumo médio (km/l)"])
 
     if "data" in df.columns:
         df = df.sort_values(by=["placa", "data", "km atual"])
@@ -35,8 +35,8 @@ def calcula_consumo_medio(df):
     resultados = []
 
     for placa, grupo in df.groupby("placa"):
-        if "tipo combustivel" in grupo.columns:
-            for combustivel, subgrupo in grupo.groupby("tipo combustivel"):
+        if "descrição despesa" in grupo.columns:
+            for combustivel, subgrupo in grupo.groupby("descrição despesa"):
                 subgrupo = subgrupo.sort_values(by="km atual")
                 kms = subgrupo["km atual"].values
                 litros = subgrupo["quantidade de litros"].values
@@ -55,7 +55,7 @@ def calcula_consumo_medio(df):
 
                 resultados.append({
                     "placa": placa,
-                    "tipo combustivel": combustivel,
+                    "descrição despesa": combustivel,
                     "consumo médio (km/l)": consumo_medio
                 })
         else:
@@ -77,7 +77,7 @@ def calcula_consumo_medio(df):
 
             resultados.append({
                 "placa": placa,
-                "tipo combustivel": "N/A",
+                "descrição despesa": "n/a",
                 "consumo médio (km/l)": consumo_medio
             })
 
@@ -109,12 +109,12 @@ if arquivo:
 
             df.dropna(subset=["km atual", "quantidade de litros"], inplace=True)
 
-        # Normalizar e garantir coluna 'tipo combustivel' com valores limpos
+        # Normalizar e garantir coluna 'descrição despesa' com valores limpos
         for df in [df_interno, df_externo]:
-            if "tipo combustivel" not in df.columns:
-                df["tipo combustivel"] = "n/a"
+            if "descrição despesa" not in df.columns:
+                df["descrição despesa"] = "n/a"
             else:
-                df["tipo combustivel"] = df["tipo combustivel"].fillna("n/a").astype(str).str.strip().str.lower()
+                df["descrição despesa"] = df["descrição despesa"].fillna("n/a").astype(str).str.strip().str.lower()
 
         # Remove linhas com placa '-' do df_interno para filtro e médias
         df_interno_sem_bomba = df_interno[df_interno["placa"] != "-"] if "placa" in df_interno.columns else df_interno.copy()
@@ -146,9 +146,9 @@ if arquivo:
         if placas_comuns:
             placa_selecionada = st.sidebar.selectbox("Selecione a placa", options=["Todas"] + placas_comuns)
 
-        # Tipo de combustível
-        combustiveis_interno = sorted(df_interno["tipo combustivel"].unique())
-        combustiveis_externo = sorted(df_externo["tipo combustivel"].unique())
+        # Tipo de combustível - pela coluna descrição despesa
+        combustiveis_interno = sorted(df_interno["descrição despesa"].unique())
+        combustiveis_externo = sorted(df_externo["descrição despesa"].unique())
         combustiveis_comuns = sorted(set(combustiveis_interno) | set(combustiveis_externo))
 
         combustivel_selecionado = st.sidebar.selectbox(
@@ -166,8 +166,8 @@ if arquivo:
                 ]
             if placa_selecionada and placa_selecionada != "Todas" and "placa" in df_filtrado.columns:
                 df_filtrado = df_filtrado[df_filtrado["placa"] == placa_selecionada]
-            if combustivel_selecionado and combustivel_selecionado != "Todos" and "tipo combustivel" in df_filtrado.columns:
-                df_filtrado = df_filtrado[df_filtrado["tipo combustivel"] == combustivel_selecionado]
+            if combustivel_selecionado and combustivel_selecionado != "Todos" and "descrição despesa" in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado["descrição despesa"] == combustivel_selecionado]
             if excluir_bomba and "placa" in df_filtrado.columns:
                 df_filtrado = df_filtrado[df_filtrado["placa"] != "-"]
             return df_filtrado
@@ -210,7 +210,7 @@ if arquivo:
 
             # Consumo médio interno
             consumo_interno = calcula_consumo_medio(df_interno_filtro)
-            st.subheader("🚛 Consumo Médio por Veículo e Combustível (Interno) - km/l")
+            st.subheader("🚛 Consumo Médio por Veículo e Tipo de Combustível (Interno) - km/l")
             if consumo_interno.empty:
                 st.write("Não há dados suficientes para calcular o consumo médio interno.")
             else:
@@ -218,7 +218,7 @@ if arquivo:
 
             # Consumo médio externo
             consumo_externo = calcula_consumo_medio(df_externo_filtro)
-            st.subheader("⛽ Consumo Médio por Veículo e Combustível (Externo) - km/l")
+            st.subheader("⛽ Consumo Médio por Veículo e Tipo de Combustível (Externo) - km/l")
             if consumo_externo.empty:
                 st.write("Não há dados suficientes para calcular o consumo médio externo.")
             else:
@@ -271,11 +271,11 @@ if arquivo:
                 st.plotly_chart(fig_placa, use_container_width=True)
 
             # Gráfico Litros por Combustível, ordenado descrescente
-            if "tipo combustivel" in df_interno_filtro.columns and not df_interno_filtro.empty:
-                agg_comb = df_interno_filtro.groupby("tipo combustivel")["quantidade de litros"].sum().reset_index()
+            if "descrição despesa" in df_interno_filtro.columns and not df_interno_filtro.empty:
+                agg_comb = df_interno_filtro.groupby("descrição despesa")["quantidade de litros"].sum().reset_index()
                 agg_comb = agg_comb.sort_values(by="quantidade de litros", ascending=False)
                 fig_comb = px.pie(
-                    agg_comb, values="quantidade de litros", names="tipo combustivel",
+                    agg_comb, values="quantidade de litros", names="descrição despesa",
                     title="Distribuição por Tipo de Combustível (Interno)"
                 )
                 st.plotly_chart(fig_comb, use_container_width=True)
@@ -298,11 +298,11 @@ if arquivo:
                 st.plotly_chart(fig_placa, use_container_width=True)
 
             # Gráfico Litros por Combustível, ordenado descrescente
-            if "tipo combustivel" in df_externo_filtro.columns and not df_externo_filtro.empty:
-                agg_comb = df_externo_filtro.groupby("tipo combustivel")["quantidade de litros"].sum().reset_index()
+            if "descrição despesa" in df_externo_filtro.columns and not df_externo_filtro.empty:
+                agg_comb = df_externo_filtro.groupby("descrição despesa")["quantidade de litros"].sum().reset_index()
                 agg_comb = agg_comb.sort_values(by="quantidade de litros", ascending=False)
                 fig_comb = px.pie(
-                    agg_comb, values="quantidade de litros", names="tipo combustivel",
+                    agg_comb, values="quantidade de litros", names="descrição despesa",
                     title="Distribuição por Tipo de Combustível (Externo)"
                 )
                 st.plotly_chart(fig_comb, use_container_width=True)
