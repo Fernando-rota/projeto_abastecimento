@@ -4,6 +4,7 @@ import unicodedata
 import plotly.express as px
 import re
 
+# Função para normalizar colunas: remove acentos, deixa minúsculas, troca espaços por underline
 def normalizar_colunas(df):
     df.columns = [
         unicodedata.normalize("NFKD", str(col))
@@ -11,6 +12,7 @@ def normalizar_colunas(df):
         .decode("utf-8")
         .strip()
         .lower()
+        .replace(" ", "_")  # troca espaços por underline
         for col in df.columns
     ]
     return df
@@ -35,9 +37,9 @@ def calcula_consumo_medio(df):
         df["placa"] = df["placa"].astype(str).str.upper().str.strip()
         df = df[~df["placa"].isin(["-", "N/A", "", "NA"])]
 
-    df["km atual"] = pd.to_numeric(df["km atual"], errors="coerce")
-    df["quantidade de litros"] = pd.to_numeric(df["quantidade de litros"], errors="coerce")
-    df = df.dropna(subset=["km atual", "quantidade de litros"])
+    df["km_atual"] = pd.to_numeric(df["km_atual"], errors="coerce")
+    df["quantidade_de_litros"] = pd.to_numeric(df["quantidade_de_litros"], errors="coerce")
+    df = df.dropna(subset=["km_atual", "quantidade_de_litros"])
 
     if "tipo_combustivel" not in df.columns:
         df["tipo_combustivel"] = "N/A"
@@ -47,9 +49,9 @@ def calcula_consumo_medio(df):
     resultados = []
 
     for (placa, combustivel), grupo in df.groupby(["placa", "tipo_combustivel"]):
-        grupo = grupo.sort_values(by="km atual")
-        kms = grupo["km atual"].values
-        litros = grupo["quantidade de litros"].values
+        grupo = grupo.sort_values(by="km_atual")
+        kms = grupo["km_atual"].values
+        litros = grupo["quantidade_de_litros"].values
 
         if len(kms) < 2:
             consumo_medio = float("nan")
@@ -101,19 +103,25 @@ if arquivo:
 
         # Limpar valores monetários no valor total e valor unitario
         for df in [df_interno, df_externo]:
-            df["valor total"] = df["valor total"].apply(limpar_valor_monetario) if "valor total" in df.columns else 0
-            df["valor unitario"] = df["valor unitario"].apply(limpar_valor_monetario) if "valor unitario" in df.columns else 0
+            if "valor_total" in df.columns:
+                df["valor_total"] = df["valor_total"].apply(limpar_valor_monetario)
+            else:
+                df["valor_total"] = 0.0
+            if "valor_unitario" in df.columns:
+                df["valor_unitario"] = df["valor_unitario"].apply(limpar_valor_monetario)
+            else:
+                df["valor_unitario"] = 0.0
 
         # Padronizar placa e tipo combustivel
         for df in [df_interno, df_externo]:
             df["placa"] = df["placa"].astype(str).str.upper().str.strip()
             df["tipo_combustivel"] = df["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
 
-            df["quantidade de litros"] = pd.to_numeric(df["quantidade de litros"], errors="coerce")
-            df["km atual"] = pd.to_numeric(df["km atual"], errors="coerce")
+            df["quantidade_de_litros"] = pd.to_numeric(df["quantidade_de_litros"], errors="coerce")
+            df["km_atual"] = pd.to_numeric(df["km_atual"], errors="coerce")
 
             # Remove linhas inválidas
-            df.dropna(subset=["placa", "quantidade de litros", "km atual"], inplace=True)
+            df.dropna(subset=["placa", "quantidade_de_litros", "km_atual"], inplace=True)
 
         # Remove placa '-' do interno
         df_interno = df_interno[df_interno["placa"] != "-"]
@@ -147,10 +155,10 @@ if arquivo:
         df_interno_f = filtrar(df_interno)
         df_externo_f = filtrar(df_externo)
 
-        total_litros_interno = df_interno_f["quantidade de litros"].sum()
-        total_litros_externo = df_externo_f["quantidade de litros"].sum()
-        total_valor_interno = df_interno_f["valor total"].sum()
-        total_valor_externo = df_externo_f["valor total"].sum()
+        total_litros_interno = df_interno_f["quantidade_de_litros"].sum()
+        total_litros_externo = df_externo_f["quantidade_de_litros"].sum()
+        total_valor_interno = df_interno_f["valor_total"].sum()
+        total_valor_externo = df_externo_f["valor_total"].sum()
 
         tabs = st.tabs(["📈 Visão Geral", "🏭 Abastecimento Interno", "⛽ Abastecimento Externo"])
 
@@ -182,13 +190,13 @@ if arquivo:
             df_externo_f["ano_mes"] = df_externo_f["data"].dt.to_period("M").astype(str)
 
             interno_mes = df_interno_f.groupby("ano_mes").agg(
-                litros=("quantidade de litros", "sum"),
-                valor=("valor total", "sum")
+                litros=("quantidade_de_litros", "sum"),
+                valor=("valor_total", "sum")
             ).reset_index()
 
             externo_mes = df_externo_f.groupby("ano_mes").agg(
-                litros=("quantidade de litros", "sum"),
-                valor=("valor total", "sum")
+                litros=("quantidade_de_litros", "sum"),
+                valor=("valor_total", "sum")
             ).reset_index()
 
             df_mes = pd.merge(interno_mes, externo_mes, on="ano_mes", how="outer", suffixes=("_interno", "_externo")).fillna(0)
@@ -206,13 +214,13 @@ if arquivo:
         with tabs[1]:
             st.subheader("🏭 Abastecimento Interno")
             if not df_interno_f.empty:
-                agg_placa = df_interno_f.groupby("placa")["quantidade de litros"].sum().reset_index().sort_values(by="quantidade de litros", ascending=False)
-                fig_placa = px.bar(agg_placa, x="placa", y="quantidade de litros",
-                                  title="Litros por Veículo (Interno)", labels={"quantidade de litros": "Litros"})
+                agg_placa = df_interno_f.groupby("placa")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
+                fig_placa = px.bar(agg_placa, x="placa", y="quantidade_de_litros",
+                                  title="Litros por Veículo (Interno)", labels={"quantidade_de_litros": "Litros"})
                 st.plotly_chart(fig_placa, use_container_width=True)
 
-                agg_comb = df_interno_f.groupby("tipo_combustivel")["quantidade de litros"].sum().reset_index().sort_values(by="quantidade de litros", ascending=False)
-                fig_comb = px.pie(agg_comb, values="quantidade de litros", names="tipo_combustivel",
+                agg_comb = df_interno_f.groupby("tipo_combustivel")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
+                fig_comb = px.pie(agg_comb, values="quantidade_de_litros", names="tipo_combustivel",
                                  title="Distribuição por Tipo de Combustível (Interno)")
                 st.plotly_chart(fig_comb, use_container_width=True)
 
@@ -222,19 +230,19 @@ if arquivo:
         with tabs[2]:
             st.subheader("⛽ Abastecimento Externo")
             if not df_externo_f.empty:
-                agg_placa = df_externo_f.groupby("placa")["quantidade de litros"].sum().reset_index().sort_values(by="quantidade de litros", ascending=False)
-                fig_placa = px.bar(agg_placa, x="placa", y="quantidade de litros",
-                                  title="Litros por Veículo (Externo)", labels={"quantidade de litros": "Litros"})
+                agg_placa = df_externo_f.groupby("placa")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
+                fig_placa = px.bar(agg_placa, x="placa", y="quantidade_de_litros",
+                                  title="Litros por Veículo (Externo)", labels={"quantidade_de_litros": "Litros"})
                 st.plotly_chart(fig_placa, use_container_width=True)
 
-                agg_comb = df_externo_f.groupby("tipo_combustivel")["quantidade de litros"].sum().reset_index().sort_values(by="quantidade de litros", ascending=False)
-                fig_comb = px.pie(agg_comb, values="quantidade de litros", names="tipo_combustivel",
+                agg_comb = df_externo_f.groupby("tipo_combustivel")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
+                fig_comb = px.pie(agg_comb, values="quantidade_de_litros", names="tipo_combustivel",
                                  title="Distribuição por Tipo de Combustível (Externo)")
                 st.plotly_chart(fig_comb, use_container_width=True)
 
-            externo_mes = df_externo_f.groupby("ano_mes")["quantidade de litros"].sum().reset_index()
-            fig_mes_externo = px.line(externo_mes, x="ano_mes", y="quantidade de litros",
-                                     labels={"ano_mes": "Mês", "quantidade de litros": "Litros"},
+            externo_mes = df_externo_f.groupby("ano_mes")["quantidade_de_litros"].sum().reset_index()
+            fig_mes_externo = px.line(externo_mes, x="ano_mes", y="quantidade_de_litros",
+                                     labels={"ano_mes": "Mês", "quantidade_de_litros": "Litros"},
                                      title="Litros Abastecidos Externos por Mês")
             st.plotly_chart(fig_mes_externo, use_container_width=True)
 
