@@ -49,13 +49,14 @@ def calcula_consumo_medio(df):
                 litros_consumidos = litros[1:]
 
                 # Evita valores negativos ou zero em km rodados
-                km_rodados = km_rodados[km_rodados > 0]
-                litros_consumidos = litros_consumidos[1:][km_rodados > 0]
+                mask = km_rodados > 0
+                km_rodados = km_rodados[mask]
+                litros_consumidos = litros_consumidos[mask]
 
-                if len(km_rodados) == 0:
+                if len(km_rodados) == 0 or litros_consumidos.sum() == 0:
                     consumo_medio = float('nan')
                 else:
-                    consumo_medio = km_rodados.sum() / litros_consumidos.sum() if litros_consumidos.sum() > 0 else float('nan')
+                    consumo_medio = km_rodados.sum() / litros_consumidos.sum()
 
                 resultados.append({
                     "placa": placa,
@@ -70,13 +71,14 @@ def calcula_consumo_medio(df):
             km_rodados = kms[1:] - kms[:-1]
             litros_consumidos = litros[1:]
 
-            km_rodados = km_rodados[km_rodados > 0]
-            litros_consumidos = litros_consumidos[1:][km_rodados > 0]
+            mask = km_rodados > 0
+            km_rodados = km_rodados[mask]
+            litros_consumidos = litros_consumidos[mask]
 
-            if len(km_rodados) == 0:
+            if len(km_rodados) == 0 or litros_consumidos.sum() == 0:
                 consumo_medio = float('nan')
             else:
-                consumo_medio = km_rodados.sum() / litros_consumidos.sum() if litros_consumidos.sum() > 0 else float('nan')
+                consumo_medio = km_rodados.sum() / litros_consumidos.sum()
 
             resultados.append({
                 "placa": placa,
@@ -103,6 +105,15 @@ if arquivo:
             df_interno["data"] = pd.to_datetime(df_interno["data"], errors="coerce")
         if "data" in df_externo.columns:
             df_externo["data"] = pd.to_datetime(df_externo["data"], errors="coerce")
+
+        # Forçar colunas numéricas e limpar dados inválidos
+        for df in [df_interno, df_externo]:
+            df["km atual"] = pd.to_numeric(df["km atual"], errors="coerce")
+            df["quantidade de litros"] = pd.to_numeric(df["quantidade de litros"], errors="coerce")
+            if "valor total" in df.columns:
+                df["valor total"] = pd.to_numeric(df["valor total"], errors="coerce")
+
+            df.dropna(subset=["km atual", "quantidade de litros"], inplace=True)
 
         # Remover linhas com placa '-' do df_interno para filtro e médias
         df_interno_sem_bomba = df_interno[df_interno["placa"] != "-"] if "placa" in df_interno.columns else df_interno.copy()
@@ -165,8 +176,8 @@ if arquivo:
         total_litros_interno = df_interno_filtro["quantidade de litros"].sum()
         total_litros_externo = df_externo_filtro["quantidade de litros"].sum()
 
-        total_valor_interno = df_interno_filtro["valor total"].sum()
-        total_valor_externo = df_externo_filtro["valor total"].sum()
+        total_valor_interno = df_interno_filtro["valor total"].sum() if "valor total" in df_interno_filtro.columns else 0
+        total_valor_externo = df_externo_filtro["valor total"].sum() if "valor total" in df_externo_filtro.columns else 0
 
         tabs = st.tabs(["📈 Visão Geral", "🏭 Abastecimento Interno", "⛽ Abastecimento Externo"])
 
