@@ -1,101 +1,97 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from utils import (
-    carregar_dados,
-    preparar_dados,
-    calcular_consumo,
-    calcular_indicadores_resumo,
-    calcular_ranking_eficiencia,
-    preparar_estoque_tanque,
-)
 
-st.set_page_config(page_title="Dashboard de Abastecimento", layout="wide")
-st.title("⛽ Dashboard de Abastecimento - Frota")
+st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
 
-# === Upload ===
-st.sidebar.header("📂 Importar Planilha")
-arquivo = st.sidebar.file_uploader("Selecione o arquivo Excel (.xlsx)", type="xlsx")
+st.title("📊 BI de Abastecimento Interno e Externo")
 
-if arquivo:
-    externo_raw, interno_raw = carregar_dados(arquivo)
-    df_base = preparar_dados(externo_raw, interno_raw)
-    df_base = calcular_consumo(df_base)
+# Upload dos arquivos
+st.sidebar.header("📂 Upload das Planilhas")
+file_interno = st.sidebar.file_uploader("Abastecimento Interno (.xlsx)", type=["xlsx"])
+file_externo = st.sidebar.file_uploader("Abastecimento Externo (.xlsx)", type=["xlsx"])
 
-    # === Filtros globais ===
-    st.sidebar.header("🔎 Filtros")
-    placas_validas = sorted(df_base['placa'].dropna().unique())
-    placa_sel = st.sidebar.multiselect("Filtrar por placa", placas_validas, default=placas_validas)
+if file_interno and file_externo:
+    # Leitura dos arquivos
+    df_interno = pd.read_excel(file_interno)
+    df_externo = pd.read_excel(file_externo)
 
-    tipo_sel = st.sidebar.multiselect("Tipo de abastecimento", ['Interno', 'Externo'], default=['Interno', 'Externo'])
+    # Normalização dos nomes de colunas
+    df_interno.columns = df_interno.columns.str.strip()
+    df_externo.columns = df_externo.columns.str.strip()
 
-    df_filtro = df_base[
-        (df_base['placa'].isin(placa_sel)) &
-        (df_base['origem'].isin(tipo_sel))
-    ]
+    # Ajustes de tipos
+    df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
+    df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
 
-    aba = st.tabs(["📊 Resumo Geral", "🏅 Ranking de Eficiência", "📈 Tendência de Abastecimento", "⛽ Estoque do Tanque"])
+    # Calcular valor total interno (caso não exista)
+    if "Valor Total" not in df_interno.columns or df_interno["Valor Total"].isnull().all():
+        if "Valor Unitario" in df_interno.columns:
+            df_interno["Valor Total"] = df_interno["Quantidade de litro"] * df_interno["Valor Unitario"].fillna(0)
 
-    # === Aba 1: Resumo Geral ===
+    # ===== ABA 1: RESUMO GERAL =====
+    aba = st.tabs(["📌 Resumo Geral", "🚚 Consumo por Veículo", "💰 Preço Médio", "📈 Tendência"])
+
     with aba[0]:
-        st.subheader("📊 Indicadores Gerais")
-
-        indicadores = calcular_indicadores_resumo(df_filtro)
+        st.subheader("📌 Resumo Geral")
+        total_litros_interno = df_interno["Quantidade de litro"].sum()
+        total_litros_externo = df_externo["Quantidade de litro"].sum()
+        custo_total_interno = df_interno["Valor Total"].sum()
+        custo_total_externo = df_externo["Valor Total"].sum()
 
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("🚛 Total de Litros", f"{indicadores['total_litros']:.0f} L")
-        col2.metric("💰 Valor Total", f"R$ {indicadores['total_valor']:.2f}")
-        col3.metric("⚖️ Valor Médio por Litro", f"R$ {indicadores['valor_medio']:.2f}")
-        col4.metric("🏷️ % Interno", f"{indicadores['pct_interno']*100:.0f}%")
+        col1.metric("Litros Interno", f"{total_litros_interno:,.0f}")
+        col2.metric("Litros Externo", f"{total_litros_externo:,.0f}")
+        col3.metric("Custo Interno", f"R$ {custo_total_interno:,.2f}")
+        col4.metric("Custo Externo", f"R$ {custo_total_externo:,.2f}")
 
-        st.divider()
-        st.subheader("📌 Abastecimentos por Origem")
-        df_origem = df_filtro.groupby('origem')['litros'].sum().reset_index()
-        fig_origem = px.pie(df_origem, names='origem', values='litros', hole=0.4, title="Distribuição por Origem")
-        st.plotly_chart(fig_origem, use_container_width=True)
-
-    # === Aba 2: Ranking de Eficiência ===
+    # ===== ABA 2: CONSUMO POR VEÍCULO =====
     with aba[1]:
-        st.subheader("🏅 Ranking de Consumo Médio (km/l)")
-        df_rank = calcular_ranking_eficiencia(df_filtro)
-        st.dataframe(df_rank, use_container_width=True)
+        st.subheader("🚚 Ranking de Consumo por Veículo")
+        ranking_interno = df_interno.groupby("Placa").agg({
+            "Quantidade de litro": "sum",
+            "Valor Total": "sum"
+        }).reset_index().sort_values(by="Quantidade de litro", ascending=False)
 
-        fig_rank = px.bar(df_rank, x='placa', y='km_litro', text_auto='.2f', title="Ranking de Eficiência")
-        fig_rank.update_layout(xaxis_title="Placa", yaxis_title="km/l")
-        st.plotly_chart(fig_rank, use_container_width=True)
+        ranking_externo = df_externo.groupby("Placa").agg({
+            "Quantidade de litro": "sum",
+            "Valor Total": "sum"
+        }).reset_index().sort_values(by="Quantidade de litro", ascending=False)
 
-    # === Aba 3: Tendência ===
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write("🔹 Interno")
+            st.dataframe(ranking_interno)
+        with col2:
+            st.write("🔹 Externo")
+            st.dataframe(ranking_externo)
+
+    # ===== ABA 3: PREÇO MÉDIO =====
     with aba[2]:
-        st.subheader("📈 Evolução Mensal dos Abastecimentos")
+        st.subheader("💰 Preço Médio por Litro")
+        preco_interno = (df_interno["Valor Total"].sum() / df_interno["Quantidade de litro"].sum()) if df_interno["Quantidade de litro"].sum() > 0 else 0
+        preco_externo = (df_externo["Valor Total"].sum() / df_externo["Quantidade de litro"].sum()) if df_externo["Quantidade de litro"].sum() > 0 else 0
 
-        df_mes = df_filtro.copy()
-        df_mes['ano_mes'] = df_mes['data'].dt.to_period('M').astype(str)
-        tendencia = df_mes.groupby(['ano_mes', 'origem'])['litros'].sum().reset_index()
+        df_preco = pd.DataFrame({
+            "Tipo": ["Interno", "Externo"],
+            "Preço Médio": [preco_interno, preco_externo]
+        })
 
-        fig_tendencia = px.bar(
-            tendencia,
-            x='ano_mes',
-            y='litros',
-            color='origem',
-            barmode='group',
-            title="Litros Abastecidos por Mês"
-        )
+        fig_preco = px.bar(df_preco, x="Tipo", y="Preço Médio", text_auto=".2f", color="Tipo", title="Comparativo Preço Médio (R$/litro)")
+        st.plotly_chart(fig_preco, use_container_width=True)
+
+    # ===== ABA 4: TENDÊNCIA =====
+    with aba[3]:
+        st.subheader("📈 Evolução de Abastecimento")
+        df_interno_g = df_interno.groupby("Data").agg({"Quantidade de litro": "sum"}).reset_index()
+        df_interno_g["Tipo"] = "Interno"
+        df_externo_g = df_externo.groupby("Data").agg({"Quantidade de litro": "sum"}).reset_index()
+        df_externo_g["Tipo"] = "Externo"
+
+        df_tendencia = pd.concat([df_interno_g, df_externo_g])
+
+        fig_tendencia = px.line(df_tendencia, x="Data", y="Quantidade de litro", color="Tipo", markers=True, title="Tendência de Abastecimento")
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
-    # === Aba 4: Estoque Tanque ===
-    with aba[3]:
-        st.subheader("⛽ Histórico de Entradas no Tanque (Reservatório)")
-
-        df_tanque = preparar_estoque_tanque(interno_raw)
-
-        col5, col6 = st.columns(2)
-        with col5:
-            fig_ent = px.line(df_tanque, x='data', y='litros', title="Entradas de Litros no Tanque")
-            st.plotly_chart(fig_ent, use_container_width=True)
-
-        with col6:
-            fig_med = px.line(df_tanque, x='data', y='medidor', title="Medidor do Tanque")
-            st.plotly_chart(fig_med, use_container_width=True)
-
-        st.divider()
-        st.dataframe(df_tanque[['data', 'litros', 'medidor', 'soma_medidor']], use_container_width=True)
+else:
+    st.info("Por favor, envie as planilhas de abastecimento interno e externo para gerar o dashboard.")
