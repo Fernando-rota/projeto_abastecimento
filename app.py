@@ -4,7 +4,6 @@ import unicodedata
 import plotly.express as px
 import re
 
-# Função para normalizar colunas: remove acentos, deixa minúsculas, troca espaços por underline
 def normalizar_colunas(df):
     df.columns = [
         unicodedata.normalize("NFKD", str(col))
@@ -12,7 +11,7 @@ def normalizar_colunas(df):
         .decode("utf-8")
         .strip()
         .lower()
-        .replace(" ", "_")  # troca espaços por underline
+        .replace(" ", "_")
         for col in df.columns
     ]
     return df
@@ -32,22 +31,14 @@ def limpar_valor_monetario(valor):
 
 def calcula_consumo_medio(df):
     df = df.copy()
-
-    if "placa" in df.columns:
-        df["placa"] = df["placa"].astype(str).str.upper().str.strip()
-        df = df[~df["placa"].isin(["-", "N/A", "", "NA"])]
-
+    df["placa"] = df["placa"].astype(str).str.upper().str.strip()
+    df = df[~df["placa"].isin(["-", "N/A", "", "NA"])]
     df["km_atual"] = pd.to_numeric(df["km_atual"], errors="coerce")
     df["quantidade_de_litros"] = pd.to_numeric(df["quantidade_de_litros"], errors="coerce")
     df = df.dropna(subset=["km_atual", "quantidade_de_litros"])
-
-    if "tipo_combustivel" not in df.columns:
-        df["tipo_combustivel"] = "N/A"
-    else:
-        df["tipo_combustivel"] = df["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
+    df["tipo_combustivel"] = df["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
 
     resultados = []
-
     for (placa, combustivel), grupo in df.groupby(["placa", "tipo_combustivel"]):
         grupo = grupo.sort_values(by="km_atual")
         kms = grupo["km_atual"].values
@@ -95,52 +86,41 @@ if arquivo:
         df_interno = normalizar_colunas(abas[nomes_abas[nome_interno]])
         df_externo = normalizar_colunas(abas[nomes_abas[nome_externo]])
 
-        # Converter Data
+        # Datas
         if "data" in df_interno.columns:
             df_interno["data"] = pd.to_datetime(df_interno["data"], errors="coerce", dayfirst=True)
         if "data" in df_externo.columns:
             df_externo["data"] = pd.to_datetime(df_externo["data"], errors="coerce", dayfirst=True)
 
-        # Limpar valores monetários no valor total e valor unitario
+        # Limpar valores monetários
         for df in [df_interno, df_externo]:
-            if "valor_total" in df.columns:
-                df["valor_total"] = df["valor_total"].apply(limpar_valor_monetario)
-            else:
-                df["valor_total"] = 0.0
-            if "valor_unitario" in df.columns:
-                df["valor_unitario"] = df["valor_unitario"].apply(limpar_valor_monetario)
-            else:
-                df["valor_unitario"] = 0.0
+            df["valor_total"] = df.get("valor_total", 0).apply(limpar_valor_monetario) if "valor_total" in df.columns else 0
+            df["valor_unitario"] = df.get("valor_unitario", 0).apply(limpar_valor_monetario) if "valor_unitario" in df.columns else 0
 
-        # Padronizar placa e tipo combustivel
-        for df in [df_interno, df_externo]:
             df["placa"] = df["placa"].astype(str).str.upper().str.strip()
             df["tipo_combustivel"] = df["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
-
             df["quantidade_de_litros"] = pd.to_numeric(df["quantidade_de_litros"], errors="coerce")
             df["km_atual"] = pd.to_numeric(df["km_atual"], errors="coerce")
 
-            # Remove linhas inválidas
             df.dropna(subset=["placa", "quantidade_de_litros", "km_atual"], inplace=True)
 
-        # Remove placa '-' do interno
+        # Remover placa '-' do interno (entrada de combustível tanque)
         df_interno = df_interno[df_interno["placa"] != "-"]
 
         st.sidebar.header("Filtros")
-
         data_min = min(df_interno["data"].min(), df_externo["data"].min())
         data_max = max(df_interno["data"].max(), df_externo["data"].max())
-
         data_inicio = st.sidebar.date_input("Data Início", data_min)
         data_fim = st.sidebar.date_input("Data Fim", data_max)
-
         if data_inicio > data_fim:
             st.sidebar.error("Data Início não pode ser maior que Data Fim")
 
         placas = sorted(set(df_interno["placa"]).union(set(df_externo["placa"])))
+        placas = [p for p in placas if p not in ("-", "N/A", "")]
         placa_selecionada = st.sidebar.selectbox("Selecione a Placa", ["Todas"] + placas)
 
         combustiveis = sorted(set(df_interno["tipo_combustivel"]).union(set(df_externo["tipo_combustivel"])))
+        combustiveis = [c for c in combustiveis if c not in ("-", "N/A", "")]
         combustivel_selecionado = st.sidebar.selectbox("Selecione o Tipo de Combustível", ["Todos"] + combustiveis)
 
         def filtrar(df):
@@ -163,29 +143,29 @@ if arquivo:
         tabs = st.tabs(["📈 Visão Geral", "🏭 Abastecimento Interno", "⛽ Abastecimento Externo"])
 
         with tabs[0]:
-            st.subheader("Indicadores Gerais")
+            st.subheader("Indicadores Principais")
             col1, col2, col3, col4 = st.columns(4)
-            col1.metric("🚛 Litros Interno", f"{total_litros_interno:,.2f} L")
-            col2.metric("⛽ Litros Externo", f"{total_litros_externo:,.2f} L")
+            col1.metric("🚛 Litros Interno", f"{total_litros_interno:,.0f} L")
+            col2.metric("⛽ Litros Externo", f"{total_litros_externo:,.0f} L")
             col3.metric("💰 Valor Interno", f"R$ {total_valor_interno:,.2f}")
             col4.metric("💵 Valor Externo", f"R$ {total_valor_externo:,.2f}")
 
             consumo_interno = calcula_consumo_medio(df_interno_f)
             consumo_externo = calcula_consumo_medio(df_externo_f)
 
-            st.subheader("Consumo Médio por Veículo e Combustível (Interno) [km/l]")
+            st.subheader("Top 5 Consumo Médio Interno (km/l)")
             if consumo_interno.empty:
                 st.write("Sem dados suficientes para cálculo.")
             else:
-                st.dataframe(consumo_interno.style.format({"consumo_medio_km_l": "{:.2f}"}))
+                st.table(consumo_interno.head(5).style.format({"consumo_medio_km_l": "{:.2f}"}))
 
-            st.subheader("Consumo Médio por Veículo e Combustível (Externo) [km/l]")
+            st.subheader("Top 5 Consumo Médio Externo (km/l)")
             if consumo_externo.empty:
                 st.write("Sem dados suficientes para cálculo.")
             else:
-                st.dataframe(consumo_externo.style.format({"consumo_medio_km_l": "{:.2f}"}))
+                st.table(consumo_externo.head(5).style.format({"consumo_medio_km_l": "{:.2f}"}))
 
-            # Consumo mês a mês
+            # Agrupa por mês e soma litros e valores
             df_interno_f["ano_mes"] = df_interno_f["data"].dt.to_period("M").astype(str)
             df_externo_f["ano_mes"] = df_externo_f["data"].dt.to_period("M").astype(str)
 
@@ -199,14 +179,15 @@ if arquivo:
                 valor=("valor_total", "sum")
             ).reset_index()
 
-            df_mes = pd.merge(interno_mes, externo_mes, on="ano_mes", how="outer", suffixes=("_interno", "_externo")).fillna(0)
+            fig_litros = px.line(interno_mes, x="ano_mes", y="litros",
+                                 title="Litros Interno por Mês", markers=True)
+            fig_litros.add_scatter(x=externo_mes["ano_mes"], y=externo_mes["litros"], mode="lines+markers", name="Litros Externo")
+            fig_litros.update_layout(xaxis_title="Mês", yaxis_title="Litros")
 
-            fig_litros = px.line(df_mes, x="ano_mes", y=["litros_interno", "litros_externo"],
-                                 labels={"value": "Litros", "ano_mes": "Mês"},
-                                 title="Litros Abastecidos Interno x Externo por Mês")
-            fig_valor = px.line(df_mes, x="ano_mes", y=["valor_interno", "valor_externo"],
-                                labels={"value": "Valor (R$)", "ano_mes": "Mês"},
-                                title="Valor Abastecido Interno x Externo por Mês (R$)")
+            fig_valor = px.line(interno_mes, x="ano_mes", y="valor",
+                                title="Valor Interno por Mês (R$)", markers=True)
+            fig_valor.add_scatter(x=externo_mes["ano_mes"], y=externo_mes["valor"], mode="lines+markers", name="Valor Externo")
+            fig_valor.update_layout(xaxis_title="Mês", yaxis_title="R$")
 
             st.plotly_chart(fig_litros, use_container_width=True)
             st.plotly_chart(fig_valor, use_container_width=True)
@@ -224,7 +205,7 @@ if arquivo:
                                  title="Distribuição por Tipo de Combustível (Interno)")
                 st.plotly_chart(fig_comb, use_container_width=True)
 
-            with st.expander("Tabela Interno (filtrada)"):
+            with st.expander("Ver tabela detalhada (Interno)"):
                 st.dataframe(df_interno_f)
 
         with tabs[2]:
@@ -243,10 +224,10 @@ if arquivo:
             externo_mes = df_externo_f.groupby("ano_mes")["quantidade_de_litros"].sum().reset_index()
             fig_mes_externo = px.line(externo_mes, x="ano_mes", y="quantidade_de_litros",
                                      labels={"ano_mes": "Mês", "quantidade_de_litros": "Litros"},
-                                     title="Litros Abastecidos Externos por Mês")
+                                     title="Litros Abastecidos Externos por Mês", markers=True)
             st.plotly_chart(fig_mes_externo, use_container_width=True)
 
-            with st.expander("Tabela Externo (filtrada)"):
+            with st.expander("Ver tabela detalhada (Externo)"):
                 st.dataframe(df_externo_f)
 
     else:
