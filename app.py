@@ -6,32 +6,42 @@ st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
 
 st.title("📊 BI de Abastecimento Interno e Externo")
 
-# Upload dos arquivos
-st.sidebar.header("📂 Upload das Planilhas")
-file_interno = st.sidebar.file_uploader("Abastecimento Interno (.xlsx)", type=["xlsx"])
-file_externo = st.sidebar.file_uploader("Abastecimento Externo (.xlsx)", type=["xlsx"])
+# Upload do arquivo único
+file_abastecimento = st.sidebar.file_uploader("📂 Upload da Planilha de Abastecimento (com abas interno e externo)", type=["xlsx"])
 
-if file_interno and file_externo:
-    # Leitura dos arquivos
-    df_interno = pd.read_excel(file_interno)
-    df_externo = pd.read_excel(file_externo)
+if file_abastecimento:
+    # Lendo as abas internas
+    dfs = pd.read_excel(file_abastecimento, sheet_name=None)
 
-    # Normalização dos nomes de colunas
+    # Ajusta nomes para evitar erros
+    abas = [nome.lower() for nome in dfs.keys()]
+
+    # Identifica quais abas são interno e externo
+    nome_interno = next((k for k in dfs.keys() if "interno" in k.lower()), list(dfs.keys())[0])
+    nome_externo = next((k for k in dfs.keys() if "externo" in k.lower()), list(dfs.keys())[1])
+
+    df_interno = dfs[nome_interno]
+    df_externo = dfs[nome_externo]
+
+    # Normalizando colunas
     df_interno.columns = df_interno.columns.str.strip()
     df_externo.columns = df_externo.columns.str.strip()
 
-    # Ajustes de tipos
-    df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
-    df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
+    # Convertendo datas
+    if "Data" in df_interno.columns:
+        df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
+    if "Data" in df_externo.columns:
+        df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
 
-    # Calcular valor total interno (caso não exista)
+    # Calcular Valor Total interno se necessário
     if "Valor Total" not in df_interno.columns or df_interno["Valor Total"].isnull().all():
         if "Valor Unitario" in df_interno.columns:
             df_interno["Valor Total"] = df_interno["Quantidade de litro"] * df_interno["Valor Unitario"].fillna(0)
 
-    # ===== ABA 1: RESUMO GERAL =====
+    # Cria as abas do dashboard
     aba = st.tabs(["📌 Resumo Geral", "🚚 Consumo por Veículo", "💰 Preço Médio", "📈 Tendência"])
 
+    # ===== ABA 1: RESUMO GERAL =====
     with aba[0]:
         st.subheader("📌 Resumo Geral")
         total_litros_interno = df_interno["Quantidade de litro"].sum()
@@ -94,4 +104,4 @@ if file_interno and file_externo:
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
 else:
-    st.info("Por favor, envie as planilhas de abastecimento interno e externo para gerar o dashboard.")
+    st.info("📥 Envie a planilha única com abas 'interno' e 'externo' para gerar o dashboard.")
