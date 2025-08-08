@@ -48,17 +48,20 @@ if arquivo:
         total_valor_interno = df_interno["valor total"].sum()
         total_valor_externo = df_externo["valor total"].sum()
 
-        with st.tabs(["📈 Visão Geral", "🏭 Abastecimento Interno", "⛽ Abastecimento Externo"]):
-            with st.container():
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("🚛 Total Litros Interno", f"{total_litros_interno:,.2f} L")
-                col2.metric("⛽ Total Litros Externo", f"{total_litros_externo:,.2f} L")
-                col3.metric("💰 Valor Interno", f"R$ {total_valor_interno:,.2f}")
-                col4.metric("💵 Valor Externo", f"R$ {total_valor_externo:,.2f}")
+        tabs = st.tabs(["📈 Visão Geral", "🏭 Abastecimento Interno", "⛽ Abastecimento Externo"])
 
+        with tabs[0]:
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("🚛 Total Litros Interno", f"{total_litros_interno:,.2f} L")
+            col2.metric("⛽ Total Litros Externo", f"{total_litros_externo:,.2f} L")
+            col3.metric("💰 Valor Interno", f"R$ {total_valor_interno:,.2f}")
+            col4.metric("💵 Valor Externo", f"R$ {total_valor_externo:,.2f}")
+
+        with tabs[1]:
             with st.expander("📋 Tabela Interno"):
                 st.dataframe(df_interno)
 
+        with tabs[2]:
             with st.expander("📋 Tabela Externo"):
                 st.dataframe(df_externo)
     else:
