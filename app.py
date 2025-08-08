@@ -1,53 +1,61 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import unicodedata
+
+# ==== Função para normalizar nomes de colunas ====
+def normalizar_colunas(df):
+    df.columns = [
+        unicodedata.normalize("NFKD", str(col))  # Remove acentos
+        .encode("ASCII", "ignore")
+        .decode("utf-8")
+        .strip()
+        .lower()
+        .replace("  ", " ")  # Remove espaços duplos
+        for col in df.columns
+    ]
+    return df
 
 st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
 
 st.title("📊 BI de Abastecimento Interno e Externo")
 
-# Upload do arquivo único
+# Upload único da planilha
 file_abastecimento = st.sidebar.file_uploader("📂 Upload da Planilha de Abastecimento (com abas interno e externo)", type=["xlsx"])
 
 if file_abastecimento:
-    # Lendo as abas internas
+    # Lendo todas as abas
     dfs = pd.read_excel(file_abastecimento, sheet_name=None)
 
-    # Ajusta nomes para evitar erros
-    abas = [nome.lower() for nome in dfs.keys()]
-
-    # Identifica quais abas são interno e externo
+    # Identifica abas interno e externo
     nome_interno = next((k for k in dfs.keys() if "interno" in k.lower()), list(dfs.keys())[0])
     nome_externo = next((k for k in dfs.keys() if "externo" in k.lower()), list(dfs.keys())[1])
 
-    df_interno = dfs[nome_interno]
-    df_externo = dfs[nome_externo]
+    # Normaliza colunas
+    df_interno = normalizar_colunas(dfs[nome_interno])
+    df_externo = normalizar_colunas(dfs[nome_externo])
 
-    # Normalizando colunas
-    df_interno.columns = df_interno.columns.str.strip()
-    df_externo.columns = df_externo.columns.str.strip()
+    # Converte datas se existir coluna "data"
+    if "data" in df_interno.columns:
+        df_interno["data"] = pd.to_datetime(df_interno["data"], errors="coerce")
+    if "data" in df_externo.columns:
+        df_externo["data"] = pd.to_datetime(df_externo["data"], errors="coerce")
 
-    # Convertendo datas
-    if "Data" in df_interno.columns:
-        df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
-    if "Data" in df_externo.columns:
-        df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
+    # Garante que existe coluna valor_total no interno
+    if "valor total" not in df_interno.columns or df_interno["valor total"].isnull().all():
+        if "valor unitario" in df_interno.columns and "quantidade de litro" in df_interno.columns:
+            df_interno["valor total"] = df_interno["quantidade de litro"] * df_interno["valor unitario"].fillna(0)
 
-    # Calcular Valor Total interno se necessário
-    if "Valor Total" not in df_interno.columns or df_interno["Valor Total"].isnull().all():
-        if "Valor Unitario" in df_interno.columns:
-            df_interno["Valor Total"] = df_interno["Quantidade de litro"] * df_interno["Valor Unitario"].fillna(0)
-
-    # Cria as abas do dashboard
+    # ===== Criação das abas =====
     aba = st.tabs(["📌 Resumo Geral", "🚚 Consumo por Veículo", "💰 Preço Médio", "📈 Tendência"])
 
     # ===== ABA 1: RESUMO GERAL =====
     with aba[0]:
         st.subheader("📌 Resumo Geral")
-        total_litros_interno = df_interno["Quantidade de litro"].sum()
-        total_litros_externo = df_externo["Quantidade de litro"].sum()
-        custo_total_interno = df_interno["Valor Total"].sum()
-        custo_total_externo = df_externo["Valor Total"].sum()
+        total_litros_interno = df_interno["quantidade de litro"].sum()
+        total_litros_externo = df_externo["quantidade de litro"].sum()
+        custo_total_interno = df_interno["valor total"].sum()
+        custo_total_externo = df_externo["valor total"].sum()
 
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Litros Interno", f"{total_litros_interno:,.0f}")
@@ -58,15 +66,15 @@ if file_abastecimento:
     # ===== ABA 2: CONSUMO POR VEÍCULO =====
     with aba[1]:
         st.subheader("🚚 Ranking de Consumo por Veículo")
-        ranking_interno = df_interno.groupby("Placa").agg({
-            "Quantidade de litro": "sum",
-            "Valor Total": "sum"
-        }).reset_index().sort_values(by="Quantidade de litro", ascending=False)
+        ranking_interno = df_interno.groupby("placa").agg({
+            "quantidade de litro": "sum",
+            "valor total": "sum"
+        }).reset_index().sort_values(by="quantidade de litro", ascending=False)
 
-        ranking_externo = df_externo.groupby("Placa").agg({
-            "Quantidade de litro": "sum",
-            "Valor Total": "sum"
-        }).reset_index().sort_values(by="Quantidade de litro", ascending=False)
+        ranking_externo = df_externo.groupby("placa").agg({
+            "quantidade de litro": "sum",
+            "valor total": "sum"
+        }).reset_index().sort_values(by="quantidade de litro", ascending=False)
 
         col1, col2 = st.columns(2)
         with col1:
@@ -79,8 +87,8 @@ if file_abastecimento:
     # ===== ABA 3: PREÇO MÉDIO =====
     with aba[2]:
         st.subheader("💰 Preço Médio por Litro")
-        preco_interno = (df_interno["Valor Total"].sum() / df_interno["Quantidade de litro"].sum()) if df_interno["Quantidade de litro"].sum() > 0 else 0
-        preco_externo = (df_externo["Valor Total"].sum() / df_externo["Quantidade de litro"].sum()) if df_externo["Quantidade de litro"].sum() > 0 else 0
+        preco_interno = (df_interno["valor total"].sum() / df_interno["quantidade de litro"].sum()) if df_interno["quantidade de litro"].sum() > 0 else 0
+        preco_externo = (df_externo["valor total"].sum() / df_externo["quantidade de litro"].sum()) if df_externo["quantidade de litro"].sum() > 0 else 0
 
         df_preco = pd.DataFrame({
             "Tipo": ["Interno", "Externo"],
@@ -93,14 +101,14 @@ if file_abastecimento:
     # ===== ABA 4: TENDÊNCIA =====
     with aba[3]:
         st.subheader("📈 Evolução de Abastecimento")
-        df_interno_g = df_interno.groupby("Data").agg({"Quantidade de litro": "sum"}).reset_index()
-        df_interno_g["Tipo"] = "Interno"
-        df_externo_g = df_externo.groupby("Data").agg({"Quantidade de litro": "sum"}).reset_index()
-        df_externo_g["Tipo"] = "Externo"
+        df_interno_g = df_interno.groupby("data").agg({"quantidade de litro": "sum"}).reset_index()
+        df_interno_g["tipo"] = "Interno"
+        df_externo_g = df_externo.groupby("data").agg({"quantidade de litro": "sum"}).reset_index()
+        df_externo_g["tipo"] = "Externo"
 
         df_tendencia = pd.concat([df_interno_g, df_externo_g])
 
-        fig_tendencia = px.line(df_tendencia, x="Data", y="Quantidade de litro", color="Tipo", markers=True, title="Tendência de Abastecimento")
+        fig_tendencia = px.line(df_tendencia, x="data", y="quantidade de litro", color="tipo", markers=True, title="Tendência de Abastecimento")
         st.plotly_chart(fig_tendencia, use_container_width=True)
 
 else:
