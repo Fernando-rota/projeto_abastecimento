@@ -27,6 +27,13 @@ if arquivo:
     df_base = aplicar_valor_interno(df_base, preco_medio_interno)
     df_base = calcular_consumo(df_base)
 
+    # Garantir que a coluna data é datetime
+    if not pd.api.types.is_datetime64_any_dtype(df_base['data']):
+        df_base['data'] = pd.to_datetime(df_base['data'], errors='coerce')
+
+    # Remover registros inválidos de placa
+    df_base = df_base[~df_base['placa'].isin(["-", "correção", None])]
+
     # Filtro por período
     st.sidebar.header("📅 Filtrar por Período")
     min_data = df_base['data'].min()
@@ -66,7 +73,7 @@ if arquivo:
         col1.metric("🚛 Total de Litros", f"{indicadores['total_litros']:.0f} L")
         col2.metric("💰 Valor Total", f"R$ {indicadores['total_valor']:.2f}")
         col3.metric("⚖️ Valor Médio por Litro", f"R$ {indicadores['valor_medio']:.2f}")
-        col4.metric("🏷️ % Interno", f"{indicadores['pct_interno']*100:.0f}%")
+        col4.metric("🏷️ % Interno", f"{indicadores['pct_interno']*100:.1f}%")
         col5.metric("💸 Custo por KM", f"R$ {indicadores['custo_por_km']:.4f}")
 
         st.divider()
@@ -82,7 +89,7 @@ if arquivo:
         st.dataframe(df_rank, use_container_width=True)
 
         fig_rank = px.bar(df_rank, x='placa', y='km_litro', text_auto='.2f', title="Ranking de Eficiência")
-        fig_rank.update_layout(xaxis_title="Placa", yaxis_title="km/l")
+        fig_rank.update_layout(xaxis_title="Placa", yaxis_title="km/l", xaxis={'categoryorder':'total descending'})
         st.plotly_chart(fig_rank, use_container_width=True)
 
     # Aba 3: Tendência
