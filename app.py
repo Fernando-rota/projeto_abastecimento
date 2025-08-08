@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import unicodedata
+import plotly.express as px
 
 # Função para normalizar colunas
 def normalizar_colunas(df):
@@ -42,7 +43,7 @@ if arquivo:
         # --- FILTROS ---
         st.sidebar.header("Filtros")
 
-        # Filtro de data - intervalo comum para interno e externo
+        # Data
         min_data = min(
             df_interno["data"].min() if "data" in df_interno.columns else pd.Timestamp.min,
             df_externo["data"].min() if "data" in df_externo.columns else pd.Timestamp.min,
@@ -55,19 +56,25 @@ if arquivo:
         data_inicio = st.sidebar.date_input("Data início", min_data)
         data_fim = st.sidebar.date_input("Data fim", max_data)
 
-        # Validação básica para intervalo de datas
         if data_inicio > data_fim:
             st.sidebar.error("Data início não pode ser maior que Data fim.")
-        
-        # Filtro por placa (se existir em ambas as tabelas)
+
+        # Placa
         placas_interno = set(df_interno["placa"].dropna().unique()) if "placa" in df_interno.columns else set()
         placas_externo = set(df_externo["placa"].dropna().unique()) if "placa" in df_externo.columns else set()
         placas_comuns = sorted(list(placas_interno.intersection(placas_externo)))
-
         placa_selecionada = None
         if placas_comuns:
             placa_selecionada = st.sidebar.selectbox("Selecione a placa", options=["Todas"] + placas_comuns)
-        
+
+        # Tipo de combustível
+        combustiveis_interno = set(df_interno["tipo de combustível"].dropna().unique()) if "tipo de combustível" in df_interno.columns else set()
+        combustiveis_externo = set(df_externo["tipo de combustível"].dropna().unique()) if "tipo de combustível" in df_externo.columns else set()
+        combustiveis_comuns = sorted(list(combustiveis_interno.union(combustiveis_externo)))
+        combustivel_selecionado = None
+        if combustiveis_comuns:
+            combustivel_selecionado = st.sidebar.selectbox("Selecione o tipo de combustível", options=["Todos"] + combustiveis_comuns)
+
         # --- FILTRAGEM DOS DADOS ---
         def filtrar_df(df):
             df_filtrado = df.copy()
@@ -78,6 +85,8 @@ if arquivo:
                 ]
             if placa_selecionada and placa_selecionada != "Todas" and "placa" in df_filtrado.columns:
                 df_filtrado = df_filtrado[df_filtrado["placa"] == placa_selecionada]
+            if combustivel_selecionado and combustivel_selecionado != "Todos" and "tipo de combustível" in df_filtrado.columns:
+                df_filtrado = df_filtrado[df_filtrado["tipo de combustível"] == combustivel_selecionado]
             return df_filtrado
 
         df_interno_filtro = filtrar_df(df_interno)
@@ -102,16 +111,52 @@ if arquivo:
             st.markdown("---")
             st.write(f"**Filtros aplicados:**")
             st.write(f"- Data: {data_inicio} até {data_fim}")
-            if placa_selecionada and placa_selecionada != "Todas":
-                st.write(f"- Placa: {placa_selecionada}")
-            else:
-                st.write(f"- Placa: Todas")
+            st.write(f"- Placa: {placa_selecionada if placa_selecionada else 'Todas'}")
+            st.write(f"- Combustível: {combustivel_selecionado if combustivel_selecionado else 'Todos'}")
+
+            # Gráfico geral Litros por data (interno x externo)
+            df_interno_agg = df_interno_filtro.groupby("data")["quantidade de litros"].sum().reset_index()
+            df_externo_agg = df_externo_filtro.groupby("data")["quantidade de litros"].sum().reset_index()
+
+            fig = px.line(title="Litros Abastecidos por Data")
+            fig.add_scatter(x=df_interno_agg["data"], y=df_interno_agg["quantidade de litros"], mode="lines+markers", name="Interno")
+            fig.add_scatter(x=df_externo_agg["data"], y=df_externo_agg["quantidade de litros"], mode="lines+markers", name="Externo")
+            fig.update_layout(xaxis_title="Data", yaxis_title="Litros")
+            st.plotly_chart(fig, use_container_width=True)
 
         with tabs[1]:
+            st.subheader("Abastecimento Interno")
+
+            # Gráfico Litros por Placa
+            if "placa" in df_interno_filtro.columns:
+                agg_placa = df_interno_filtro.groupby("placa")["quantidade de litros"].sum().reset_index()
+                fig_placa = px.bar(agg_placa, x="placa", y="quantidade de litros", title="Litros por Veículo (Interno)", labels={"quantidade de litros": "Litros"})
+                st.plotly_chart(fig_placa, use_container_width=True)
+
+            # Gráfico Litros por Combustível
+            if "tipo de combustível" in df_interno_filtro.columns:
+                agg_comb = df_interno_filtro.groupby("tipo de combustível")["quantidade de litros"].sum().reset_index()
+                fig_comb = px.pie(agg_comb, values="quantidade de litros", names="tipo de combustível", title="Distribuição por Tipo de Combustível (Interno)")
+                st.plotly_chart(fig_comb, use_container_width=True)
+
             with st.expander("📋 Tabela Interno (filtrada)"):
                 st.dataframe(df_interno_filtro)
 
         with tabs[2]:
+            st.subheader("Abastecimento Externo")
+
+            # Gráfico Litros por Placa
+            if "placa" in df_externo_filtro.columns:
+                agg_placa = df_externo_filtro.groupby("placa")["quantidade de litros"].sum().reset_index()
+                fig_placa = px.bar(agg_placa, x="placa", y="quantidade de litros", title="Litros por Veículo (Externo)", labels={"quantidade de litros": "Litros"})
+                st.plotly_chart(fig_placa, use_container_width=True)
+
+            # Gráfico Litros por Combustível
+            if "tipo de combustível" in df_externo_filtro.columns:
+                agg_comb = df_externo_filtro.groupby("tipo de combustível")["quantidade de litros"].sum().reset_index()
+                fig_comb = px.pie(agg_comb, values="quantidade de litros", names="tipo de combustível", title="Distribuição por Tipo de Combustível (Externo)")
+                st.plotly_chart(fig_comb, use_container_width=True)
+
             with st.expander("📋 Tabela Externo (filtrada)"):
                 st.dataframe(df_externo_filtro)
 
