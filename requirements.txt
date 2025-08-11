@@ -3,5 +3,5 @@ pandas
 plotly
 python-pptx
 Pillow
-cairosvg
+kaleido
 openpyxl
