@@ -1,199 +1,141 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 
-st.set_page_config(page_title="Dashboard Frota - Consumo & Abastecimento", layout="wide")
+# Função para limpar e padronizar valores monetários e numéricos
+def limpar_valor(valor):
+    if pd.isna(valor):
+        return 0.0
+    if isinstance(valor, str):
+        return float(valor.replace('R$', '').replace('.', '').replace(',', '.').strip())
+    return float(valor)
 
-@st.cache_data
-def load_data(uploaded_file):
-    xls = pd.ExcelFile(uploaded_file)
-    df_interno = pd.read_excel(xls, 'interno')
-    df_externo = pd.read_excel(xls, 'externo')
-    df_consumo = pd.read_excel(xls, 'consumo')
-
-    # Datas
+def carregar_dados(interno_path, externo_path, consumo_path):
+    # Carregar planilhas
+    df_interno = pd.read_excel(interno_path, sheet_name='interno')
+    df_externo = pd.read_excel(externo_path, sheet_name='externo')
+    df_consumo = pd.read_excel(consumo_path, sheet_name='consumo')
+    
+    # Limpeza e padronização interno
     df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
+    df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce').fillna(0)
+    df_interno['Valor Unitario'] = df_interno['Valor Unitario'].apply(limpar_valor)
+    df_interno['Valor Total'] = df_interno['Valor Total'].apply(limpar_valor)
+    df_interno['Placa'] = df_interno['Placa'].str.strip().str.upper()
+    df_interno['Tipo Combustivel'] = df_interno['Tipo Combustivel'].str.strip().str.upper()
+    
+    # Limpeza externo
     df_externo['Data'] = pd.to_datetime(df_externo['Data'], dayfirst=True, errors='coerce')
+    df_externo['Quantidade de litros'] = df_externo['Quantidade de litros'].astype(str).str.replace(',', '.').astype(float)
+    df_externo['Valor Unitario'] = df_externo['Valor Unitario'].apply(limpar_valor)
+    df_externo['Valor Total'] = df_externo['Valor Total'].apply(limpar_valor)
+    df_externo['Placa'] = df_externo['Placa'].str.strip().str.upper()
+    df_externo['Tipo Combustivel'] = df_externo['Tipo Combustivel'].str.strip().str.upper()
+    
+    # Limpeza consumo
     df_consumo['DATA'] = pd.to_datetime(df_consumo['DATA'], dayfirst=True, errors='coerce')
-
-    # Números
-    df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce')
-    df_externo['Quantidade de litros'] = pd.to_numeric(df_externo['Quantidade de litros'], errors='coerce')
-    df_consumo['QTD LITROS'] = pd.to_numeric(df_consumo['QTD LITROS'], errors='coerce')
-
-    # Limpar valores monetários
-    def clean_valor(valor):
-        if pd.isna(valor):
-            return np.nan
-        if isinstance(valor, (int, float)):
-            return float(valor)
-        if isinstance(valor, str):
-            valor = valor.replace('R$', '').replace('.', '').replace(',', '.').strip()
-            try:
-                return float(valor)
-            except:
-                return np.nan
-        return np.nan
-
-    df_externo['Valor Unitario'] = df_externo['Valor Unitario'].apply(clean_valor)
-    df_externo['Valor Total'] = df_externo['Valor Total'].apply(clean_valor)
-    df_interno['Valor Unitario'] = df_interno['Valor Unitario'].apply(clean_valor)
-    df_interno['Valor Total'] = df_interno['Valor Total'].apply(clean_valor)
-
+    df_consumo['QTD LITROS'] = df_consumo['QTD LITROS'].astype(float)
+    df_consumo['PLACA'] = df_consumo['PLACA'].str.strip().str.upper()
+    df_consumo['TIPO'] = df_consumo['TIPO'].str.strip().str.upper()
+    
     return df_interno, df_externo, df_consumo
 
-def calcula_indicadores(df, litros_col='Quantidade de litros', valor_col='Valor Total', placa_col='Placa'):
-    # Remove placa '-' para análises de veículos
-    df = df[df[placa_col] != '-']
-    total_litros = df[litros_col].sum()
-    total_valor = df[valor_col].sum() if valor_col in df.columns else np.nan
-    valor_medio_litro = total_valor / total_litros if total_litros > 0 else np.nan
-    placas_unicas = df[placa_col].dropna().unique().tolist()
-    return {
-        "total_litros": total_litros,
-        "total_valor": total_valor,
-        "valor_medio_litro": valor_medio_litro,
-        "num_veiculos": len(placas_unicas),
-        "placas": placas_unicas,
-    }
-
-def consumo_medio_por_placa(df_consumo):
-    # Remove placa '-' e limpa dados
-    df = df_consumo[df_consumo['PLACA'] != '-'].copy()
-    placas = df['PLACA'].unique()
-    resultados = []
-    for placa in placas:
-        df_p = df[df['PLACA'] == placa]
-        km_min = df_p['KM'].min()
-        km_max = df_p['KM'].max()
-        litros_total = df_p['QTD LITROS'].sum()
-        km_rodados = km_max - km_min
-        km_por_litro = km_rodados / litros_total if litros_total > 0 else np.nan
-        resultados.append({
-            'PLACA': placa,
-            'KM Inicial': km_min,
-            'KM Final': km_max,
-            'Km Rodados': km_rodados,
-            'Total Litros': litros_total,
-            'Consumo (km/litro)': km_por_litro
-        })
-    return pd.DataFrame(resultados)
-
 def main():
-    st.title("Dashboard Frota: Consumo & Abastecimento")
-
-    uploaded_file = st.file_uploader("Envie seu arquivo Excel com abas 'interno', 'externo' e 'consumo'", type=['xlsx'])
-    if not uploaded_file:
-        st.info("Por favor, envie o arquivo para iniciar.")
-        return
-
-    df_interno, df_externo, df_consumo = load_data(uploaded_file)
-
-    # Preparar filtros gerais
-    placas_interno = set(df_interno['Placa'].dropna().unique()) - {'-'}
-    placas_externo = set(df_externo['Placa'].dropna().unique()) - {'-'}
-    placas_consumo = set(df_consumo['PLACA'].dropna().unique()) - {'-'}
-
-    placas = sorted(placas_interno | placas_externo | placas_consumo)
-
-    combustiveis = sorted(set(
-        df_interno['Tipo Combustivel'].dropna().unique().tolist() +
-        df_externo['Tipo Combustivel'].dropna().unique().tolist() +
-        df_consumo['TIPO'].dropna().unique().tolist()
-    ))
-
-    with st.sidebar:
-        st.header("Filtros Gerais")
-        placas_selecionadas = st.multiselect("Selecione placas:", options=placas, default=placas)
-        combustivel_selecionado = st.multiselect("Selecione combustível(s):", options=combustiveis, default=combustiveis)
-
-        data_min = min(df_interno['Data'].min(), df_externo['Data'].min(), df_consumo['DATA'].min())
-        data_max = max(df_interno['Data'].max(), df_externo['Data'].max(), df_consumo['DATA'].max())
-
-        data_inicio, data_fim = st.date_input("Período:", value=[data_min, data_max], min_value=data_min, max_value=data_max)
-
-    # Função para filtrar dataframe conforme filtros selecionados
-    def filtrar(df, data_col, placa_col, tipo_col=None, litros_col=None):
-        df_f = df.copy()
-        df_f = df_f[df_f[placa_col].isin(placas_selecionadas)]
-        df_f = df_f[(df_f[data_col] >= pd.to_datetime(data_inicio)) & (df_f[data_col] <= pd.to_datetime(data_fim))]
-        if tipo_col:
-            df_f = df_f[df_f[tipo_col].isin(combustivel_selecionado)]
-        if litros_col:
-            df_f = df_f[pd.notnull(df_f[litros_col])]
-        return df_f
-
-    df_interno_f = filtrar(df_interno, 'Data', 'Placa', 'Tipo Combustivel', 'Quantidade de litros')
-    df_externo_f = filtrar(df_externo, 'Data', 'Placa', 'Tipo Combustivel', 'Quantidade de litros')
-    df_consumo_f = filtrar(df_consumo, 'DATA', 'PLACA', 'TIPO', 'QTD LITROS')
-
-    # Começar com abas para mostrar cada fonte separada + comparação
-    abas = st.tabs(["Abastecimento Interno", "Abastecimento Externo", "Consumo", "Comparações"])
-
-    with abas[0]:
-        st.header("Abastecimento Interno")
-        ind_interno = calcula_indicadores(df_interno_f)
-        st.metric("Total litros", f"{ind_interno['total_litros']:.2f}")
-        st.metric("Total gasto (R$)", f"{ind_interno['total_valor']:.2f}")
-        st.metric("Valor médio por litro (R$)", f"{ind_interno['valor_medio_litro']:.2f}")
-        st.metric("Veículos (placas únicas)", ind_interno['num_veiculos'])
-
-        st.subheader("Dados filtrados")
-        st.dataframe(df_interno_f)
-
-    with abas[1]:
-        st.header("Abastecimento Externo")
-        ind_externo = calcula_indicadores(df_externo_f)
-        st.metric("Total litros", f"{ind_externo['total_litros']:.2f}")
-        st.metric("Total gasto (R$)", f"{ind_externo['total_valor']:.2f}")
-        st.metric("Valor médio por litro (R$)", f"{ind_externo['valor_medio_litro']:.2f}")
-        st.metric("Veículos (placas únicas)", ind_externo['num_veiculos'])
-
-        st.subheader("Dados filtrados")
-        st.dataframe(df_externo_f)
-
-    with abas[2]:
-        st.header("Consumo")
-        ind_consumo = calcula_indicadores(df_consumo_f, litros_col='QTD LITROS', valor_col=None, placa_col='PLACA')
-        st.metric("Total litros", f"{ind_consumo['total_litros']:.2f}")
-        st.metric("Veículos (placas únicas)", ind_consumo['num_veiculos'])
-
-        df_consumo_med = consumo_medio_por_placa(df_consumo_f)
-        st.subheader("Consumo médio por veículo")
-        st.dataframe(df_consumo_med)
-
-        fig_consumo = px.bar(df_consumo_med, x='PLACA', y='Consumo (km/litro)',
-                            labels={'PLACA': 'Placa', 'Consumo (km/litro)': 'Km por Litro'},
-                            title="Consumo médio (Km por litro) por veículo")
-        st.plotly_chart(fig_consumo, use_container_width=True)
-
-    with abas[3]:
-        st.header("Comparações Entre Abastecimentos e Consumo")
-
-        # Comparar total litros e gasto entre interno e externo lado a lado
-        comp_df = pd.DataFrame({
-            "Fonte": ["Interno", "Externo"],
-            "Total Litros": [ind_interno['total_litros'], ind_externo['total_litros']],
-            "Total Gasto (R$)": [ind_interno['total_valor'], ind_externo['total_valor']]
-        })
-        st.subheader("Total litros e gasto por fonte")
-        st.dataframe(comp_df)
-
-        fig_comp_litros = px.bar(comp_df, x='Fonte', y='Total Litros', title="Comparação de Litros Abastecidos")
-        st.plotly_chart(fig_comp_litros, use_container_width=True)
-
-        fig_comp_gasto = px.bar(comp_df, x='Fonte', y='Total Gasto (R$)', title="Comparação de Gasto Total")
-        st.plotly_chart(fig_comp_gasto, use_container_width=True)
-
-        # Mostrar placas comuns e diferentes
-        placas_comuns = set(ind_interno['placas']) & set(ind_externo['placas'])
-        placas_somente_interno = set(ind_interno['placas']) - placas_comuns
-        placas_somente_externo = set(ind_externo['placas']) - placas_comuns
-
-        st.write(f"Placas em comum: {', '.join(sorted(placas_comuns)) if placas_comuns else 'Nenhuma'}")
-        st.write(f"Placas somente em interno: {', '.join(sorted(placas_somente_interno)) if placas_somente_interno else 'Nenhuma'}")
-        st.write(f"Placas somente em externo: {', '.join(sorted(placas_somente_externo)) if placas_somente_externo else 'Nenhuma'}")
-
+    st.title("Dashboard de Consumo e Abastecimento de Frota")
+    
+    st.sidebar.header("Configurações")
+    
+    # Upload arquivos Excel
+    interno_file = st.sidebar.file_uploader("Upload planilha aba 'interno'", type=['xls', 'xlsx'])
+    externo_file = st.sidebar.file_uploader("Upload planilha aba 'externo'", type=['xls', 'xlsx'])
+    consumo_file = st.sidebar.file_uploader("Upload planilha aba 'consumo'", type=['xls', 'xlsx'])
+    
+    if interno_file and externo_file and consumo_file:
+        df_interno, df_externo, df_consumo = carregar_dados(interno_file, externo_file, consumo_file)
+        
+        # Filtros
+        placas = sorted(df_consumo['PLACA'].unique())
+        combustiveis = sorted(df_consumo['TIPO'].unique())
+        
+        placa_selecionada = st.sidebar.selectbox("Selecione a placa", ['Todas'] + placas)
+        combustivel_selecionado = st.sidebar.selectbox("Selecione o tipo de combustível", ['Todos'] + combustiveis)
+        
+        # Filtrar dados consumo
+        df_consumo_filtrado = df_consumo.copy()
+        if placa_selecionada != 'Todas':
+            df_consumo_filtrado = df_consumo_filtrado[df_consumo_filtrado['PLACA'] == placa_selecionada]
+        if combustivel_selecionado != 'Todos':
+            df_consumo_filtrado = df_consumo_filtrado[df_consumo_filtrado['TIPO'] == combustivel_selecionado]
+        
+        st.subheader("Consumo por data")
+        fig1 = px.line(df_consumo_filtrado, x='DATA', y='QTD LITROS', color='TIPO',
+                       labels={'QTD LITROS':'Quantidade Litros', 'DATA':'Data', 'TIPO':'Combustível'},
+                       title='Consumo diário de combustível')
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Indicadores básicos - consumo médio km/l
+        # Para isso vamos calcular delta km e litros consumidos por período
+        # Usaremos df_consumo para isso, agrupado por placa e tipo
+        
+        df_consumo_filtrado = df_consumo_filtrado.sort_values(['PLACA','DATA'])
+        
+        df_consumo_filtrado['KM_DIFF'] = df_consumo_filtrado.groupby(['PLACA','TIPO'])['KM'].diff()
+        
+        # Evitar divisão por zero e valores negativos
+        df_consumo_filtrado = df_consumo_filtrado[df_consumo_filtrado['KM_DIFF'] > 0]
+        
+        df_consumo_filtrado['CONSUMO_KM_L'] = df_consumo_filtrado['KM_DIFF'] / df_consumo_filtrado['QTD LITROS']
+        
+        st.subheader("Indicadores de Eficiência")
+        if not df_consumo_filtrado.empty:
+            media_km_l = df_consumo_filtrado['CONSUMO_KM_L'].mean()
+            st.metric("Consumo médio (km/l)", f"{media_km_l:.2f}")
+        else:
+            st.write("Dados insuficientes para cálculo de consumo médio km/l")
+        
+        # Custo médio por litro interno e externo
+        st.subheader("Custo Médio por Litro - Interno x Externo")
+        
+        # Interno
+        df_interno_filtrado = df_interno.copy()
+        if placa_selecionada != 'Todas':
+            df_interno_filtrado = df_interno_filtrado[df_interno_filtrado['Placa'] == placa_selecionada]
+        if combustivel_selecionado != 'Todos':
+            df_interno_filtrado = df_interno_filtrado[df_interno_filtrado['Tipo Combustivel'] == combustivel_selecionado]
+        
+        # Externo
+        df_externo_filtrado = df_externo.copy()
+        if placa_selecionada != 'Todas':
+            df_externo_filtrado = df_externo_filtrado[df_externo_filtrado['Placa'] == placa_selecionada]
+        if combustivel_selecionado != 'Todos':
+            df_externo_filtrado = df_externo_filtrado[df_externo_filtrado['Tipo Combustivel'] == combustivel_selecionado]
+        
+        custo_medio_interno = (df_interno_filtrado['Valor Total'].sum() / df_interno_filtrado['Quantidade de litros'].sum()
+                              if df_interno_filtrado['Quantidade de litros'].sum() > 0 else 0)
+        custo_medio_externo = (df_externo_filtrado['Valor Total'].sum() / df_externo_filtrado['Quantidade de litros'].sum()
+                              if df_externo_filtrado['Quantidade de litros'].sum() > 0 else 0)
+        
+        st.metric("Custo Médio Interno (R$/litro)", f"R$ {custo_medio_interno:.2f}")
+        st.metric("Custo Médio Externo (R$/litro)", f"R$ {custo_medio_externo:.2f}")
+        
+        # Evolução custo total ao longo do tempo (interno + externo)
+        st.subheader("Evolução do Custo Total ao Longo do Tempo")
+        df_interno_plot = df_interno_filtrado.groupby('Data').agg({'Valor Total':'sum'}).reset_index()
+        df_interno_plot['Tipo'] = 'Interno'
+        df_externo_plot = df_externo_filtrado.groupby('Data').agg({'Valor Total':'sum'}).reset_index()
+        df_externo_plot['Tipo'] = 'Externo'
+        df_custos = pd.concat([df_interno_plot, df_externo_plot])
+        
+        if not df_custos.empty:
+            fig2 = px.line(df_custos, x='Data', y='Valor Total', color='Tipo',
+                           labels={'Valor Total':'Valor Total (R$)', 'Data':'Data', 'Tipo':'Origem'},
+                           title='Custo Total por Data')
+            st.plotly_chart(fig2, use_container_width=True)
+        else:
+            st.write("Sem dados para gráfico de custo.")
+        
+    else:
+        st.info("Faça upload das 3 planilhas para visualizar os dados.")
+    
 if __name__ == "__main__":
     main()
