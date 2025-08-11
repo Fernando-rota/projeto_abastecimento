@@ -1,147 +1,69 @@
-import pandas as pd
-import streamlit as st
-import plotly.express as px
+import io
+from pptx import Presentation
+from pptx.util import Inches
+import tempfile
 
-st.set_page_config(page_title="Dashboard Consumo e Abastecimento", layout="wide")
-st.title("📊 Dashboard Consumo e Abastecimento de Veículos")
+# Função para criar apresentação PPTX
+def criar_ppt(resumo_consumo_df, fig_consumo, resumo_consumo_ab_df, fig_consumo_ab):
+    prs = Presentation()
+    blank_slide_layout = prs.slide_layouts[6]  # slide vazio
 
-@st.cache_data
-def load_data(file_path):
-    interno = pd.read_excel(file_path, sheet_name='interno')
-    externo = pd.read_excel(file_path, sheet_name='externo')
-    consumo = pd.read_excel(file_path, sheet_name='consumo')
+    # Slide 1: título
+    slide1 = prs.slides.add_slide(blank_slide_layout)
+    title_shape = slide1.shapes.title
+    if title_shape:
+        title_shape.text = "Dashboard Consumo e Abastecimento - Resumo"
+    else:
+        txBox = slide1.shapes.add_textbox(Inches(1), Inches(0.5), Inches(8), Inches(1))
+        tf = txBox.text_frame
+        tf.text = "Dashboard Consumo e Abastecimento - Resumo"
 
-    # Padronizar colunas
-    for df in [interno, externo, consumo]:
-        df.rename(columns=lambda x: x.strip().lower().replace(' ', '_'), inplace=True)
-    
-    # Converter datas
-    interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
-    externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
-    consumo['data'] = pd.to_datetime(consumo['data'], errors='coerce')
+    # Slide 2: gráfico consumo médio
+    slide2 = prs.slides.add_slide(blank_slide_layout)
+    slide2.shapes.add_picture(fig_to_image(fig_consumo), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
-    # Remover linhas com data inválida
-    interno.dropna(subset=['data'], inplace=True)
-    externo.dropna(subset=['data'], inplace=True)
-    consumo.dropna(subset=['data'], inplace=True)
+    # Slide 3: tabela resumo consumo médio (convertida em texto simples)
+    slide3 = prs.slides.add_slide(blank_slide_layout)
+    text = "Resumo Consumo Médio por Veículo\n\n"
+    for _, row in resumo_consumo_df.iterrows():
+        text += f"Placa: {row['placa']} | Km rodados: {row['km_rodados']:.0f} | Litros: {row['litros_totais']:.2f} | Consumo Médio: {row['consumo_medio_km_por_litro']:.2f}\n"
+    txBox = slide3.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(6))
+    tf = txBox.text_frame
+    tf.text = text
 
-    return interno, externo, consumo
+    # Slide 4: gráfico litros consumidos (aba consumo)
+    slide4 = prs.slides.add_slide(blank_slide_layout)
+    slide4.shapes.add_picture(fig_to_image(fig_consumo_ab), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
-uploaded_file = st.file_uploader("📁 Carregue sua planilha Excel com abas: interno, externo, consumo", type=['xlsx'])
-if uploaded_file:
-    interno, externo, consumo = load_data(uploaded_file)
+    # Slide 5: tabela resumo aba consumo
+    slide5 = prs.slides.add_slide(blank_slide_layout)
+    text2 = "Indicadores Aba Consumo\n\n"
+    for _, row in resumo_consumo_ab_df.iterrows():
+        text2 += f"Placa: {row['placa']} | Total Litros: {row['total_litros_consumo']:.2f} | Média Km: {row['media_km_consumo']:.0f} | Registros: {row['registros']}\n"
+    txBox2 = slide5.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(6))
+    tf2 = txBox2.text_frame
+    tf2.text = text2
 
-    st.sidebar.header("Filtros")
+    # Salvar em buffer
+    pptx_io = io.BytesIO()
+    prs.save(pptx_io)
+    pptx_io.seek(0)
+    return pptx_io
 
-    # Datas para filtro geral - mínimo e máximo de todas as abas
-    datas = pd.concat([interno['data'], externo['data'], consumo['data']])
-    min_date, max_date = datas.min(), datas.max()
-    date_range = st.sidebar.date_input("Período", [min_date, max_date])
+# Função auxiliar para converter figura Plotly em imagem PNG em disco temporário
+def fig_to_image(fig):
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+    fig.write_image(tmp.name)
+    return tmp.name
 
-    # Placas para filtro (interno + externo)
-    placas_interno = interno['placa'].dropna().unique()
-    placas_externo = externo['placa'].dropna().unique()
-    placas_consumo = consumo['placa'].dropna().unique()
-    placas = sorted(set(placas_interno) | set(placas_externo) | set(placas_consumo))
-    placas_selected = st.sidebar.multiselect("Selecione Placa(s)", placas, default=placas)
+# --- No seu código Streamlit, após criar os gráficos e DataFrames resumo_consumo, fig_consumo, resumo_consumo_ab, fig_consumo_ab ---
 
-    # Combustíveis para filtro (interno + externo)
-    combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
-    combust_externo = externo['tipo_combustivel'].dropna().unique() if 'tipo_combustivel' in externo.columns else []
-    combustiveis = sorted(set(combust_interno) | set(combust_externo))
-    combustiveis_selected = st.sidebar.multiselect("Tipo de Combustível", combustiveis, default=combustiveis)
+pptx_file = criar_ppt(resumo_consumo, fig1, resumo_consumo_ab, fig2)
 
-    # Filtrar datas
-    data_start, data_end = pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])
-    interno_filt = interno[(interno['data'] >= data_start) & (interno['data'] <= data_end)]
-    externo_filt = externo[(externo['data'] >= data_start) & (externo['data'] <= data_end)]
-    consumo_filt = consumo[(consumo['data'] >= data_start) & (consumo['data'] <= data_end)]
-
-    # Filtrar placas
-    interno_filt = interno_filt[interno_filt['placa'].isin(placas_selected)]
-    externo_filt = externo_filt[externo_filt['placa'].isin(placas_selected)]
-    consumo_filt = consumo_filt[consumo_filt['placa'].isin(placas_selected)]
-
-    # Filtrar combustíveis
-    if 'tipo' in interno_filt.columns:
-        interno_filt = interno_filt[interno_filt['tipo'].isin(combustiveis_selected)]
-    if 'tipo_combustivel' in externo_filt.columns:
-        externo_filt = externo_filt[externo_filt['tipo_combustivel'].isin(combustiveis_selected)]
-
-    # --- Indicadores com interno + externo para consumo médio ---
-
-    interno_filt = interno_filt.rename(columns={'quantidade_de_litros': 'litros', 'km_atual': 'km', 'tipo': 'combustivel'})
-    externo_filt = externo_filt.rename(columns={'quantidade_de_litros': 'litros', 'km_atual': 'km', 'tipo_combustivel': 'combustivel'})
-
-    cols_needed = ['data', 'placa', 'combustivel', 'litros', 'km']
-    interno_sel = interno_filt[cols_needed]
-    externo_sel = externo_filt[cols_needed]
-
-    abastecimentos = pd.concat([interno_sel, externo_sel], ignore_index=True)
-
-    # Ajustar vírgulas e converter para numérico
-    abastecimentos['km'] = abastecimentos['km'].astype(str).str.replace(',', '.', regex=False)
-    abastecimentos['litros'] = abastecimentos['litros'].astype(str).str.replace(',', '.', regex=False)
-    abastecimentos['km'] = pd.to_numeric(abastecimentos['km'], errors='coerce')
-    abastecimentos['litros'] = pd.to_numeric(abastecimentos['litros'], errors='coerce')
-
-    abastecimentos.dropna(subset=['km', 'litros'], inplace=True)
-
-    resumo_consumo = abastecimentos.groupby('placa').agg(
-        km_min=('km', 'min'),
-        km_max=('km', 'max'),
-        litros_totais=('litros', 'sum')
-    ).reset_index()
-
-    resumo_consumo['km_rodados'] = resumo_consumo['km_max'] - resumo_consumo['km_min']
-    resumo_consumo['consumo_medio_km_por_litro'] = resumo_consumo.apply(
-        lambda row: row['km_rodados'] / row['litros_totais'] if row['litros_totais'] > 0 else None,
-        axis=1
-    )
-
-    resumo_consumo = resumo_consumo.sort_values('consumo_medio_km_por_litro', ascending=False)
-
-    st.header("🚛 Consumo Médio por Veículo (Interno + Externo)")
-    st.dataframe(resumo_consumo.style.format({
-        'km_min': '{:,.0f}',
-        'km_max': '{:,.0f}',
-        'litros_totais': '{:,.2f}',
-        'km_rodados': '{:,.0f}',
-        'consumo_medio_km_por_litro': '{:.2f}'
-    }))
-
-    fig1 = px.bar(resumo_consumo, x='placa', y='consumo_medio_km_por_litro',
-                  labels={'consumo_medio_km_por_litro': 'Km por Litro', 'placa': 'Placa'},
-                  title='Consumo Médio (Km por Litro) por Veículo')
-    st.plotly_chart(fig1, use_container_width=True)
-
-    # --- Indicadores da aba consumo (exemplo) ---
-
-    # Converter litros e km para numérico, tratar vírgula
-    consumo_filt['qtd_litros'] = consumo_filt['qtd_litros'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['km'] = consumo_filt['km'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['qtd_litros'] = pd.to_numeric(consumo_filt['qtd_litros'], errors='coerce')
-    consumo_filt['km'] = pd.to_numeric(consumo_filt['km'], errors='coerce')
-
-    consumo_filt.dropna(subset=['qtd_litros', 'km'], inplace=True)
-
-    resumo_consumo_ab = consumo_filt.groupby('placa').agg(
-        total_litros_consumo=('qtd_litros', 'sum'),
-        media_km_consumo=('km', 'mean'),
-        registros=('data', 'count')
-    ).reset_index()
-
-    st.header("⛽ Indicadores da aba Consumo")
-    st.dataframe(resumo_consumo_ab.style.format({
-        'total_litros_consumo': '{:,.2f}',
-        'media_km_consumo': '{:,.0f}',
-        'registros': '{:,.0f}'
-    }))
-
-    fig2 = px.bar(resumo_consumo_ab, x='placa', y='total_litros_consumo',
-                  labels={'total_litros_consumo': 'Total Litros', 'placa': 'Placa'},
-                  title='Total de Litros Consumidos por Veículo (Aba Consumo)')
-    st.plotly_chart(fig2, use_container_width=True)
-
-else:
-    st.info("Faça upload da planilha Excel para começar.")
+st.download_button(
+    label="📥 Exportar Apresentação PowerPoint",
+    data=pptx_file,
+    file_name="dashboard_consumo_veiculos.pptx",
+    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
