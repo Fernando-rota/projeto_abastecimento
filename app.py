@@ -69,6 +69,15 @@ if uploaded_file:
 
     abastecimentos = pd.concat([interno_sel, externo_sel], ignore_index=True)
 
+    # Tratar vírgulas e converter para numérico
+    abastecimentos['km'] = abastecimentos['km'].astype(str).str.replace(',', '.', regex=False)
+    abastecimentos['litros'] = abastecimentos['litros'].astype(str).str.replace(',', '.', regex=False)
+    abastecimentos['km'] = pd.to_numeric(abastecimentos['km'], errors='coerce')
+    abastecimentos['litros'] = pd.to_numeric(abastecimentos['litros'], errors='coerce')
+
+    # Remover linhas com km ou litros inválidos
+    abastecimentos.dropna(subset=['km', 'litros'], inplace=True)
+
     resumo = abastecimentos.groupby('placa').agg(
         km_min=('km', 'min'),
         km_max=('km', 'max'),
@@ -76,7 +85,10 @@ if uploaded_file:
     ).reset_index()
 
     resumo['km_rodados'] = resumo['km_max'] - resumo['km_min']
-    resumo['consumo_medio_km_por_litro'] = resumo['km_rodados'] / resumo['litros_totais']
+    resumo['consumo_medio_km_por_litro'] = resumo.apply(
+        lambda row: row['km_rodados'] / row['litros_totais'] if row['litros_totais'] > 0 else None,
+        axis=1
+    )
 
     resumo = resumo.sort_values('consumo_medio_km_por_litro', ascending=False)
 
