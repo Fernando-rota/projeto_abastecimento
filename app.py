@@ -10,7 +10,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Dashboard Consumo e Abastecimento", layout="wide")
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_data(file_path):
     interno = pd.read_excel(file_path, sheet_name='interno')
     externo = pd.read_excel(file_path, sheet_name='externo')
@@ -29,6 +29,7 @@ def load_data(file_path):
 
     return interno, externo, consumo
 
+@st.cache_data(show_spinner=False)
 def preprocess_abastecimentos(df, litros_col, km_col, combust_col):
     df = df.rename(columns={
         litros_col: 'litros',
@@ -69,8 +70,6 @@ def plot_litros_total(abastecimentos):
     return resumo_ab, fig
 
 def plot_autonomia_real(consumo_df, abastecimento_df):
-    # Juntando consumo real e abastecimentos para comparar autonomia
-    # Vamos calcular autonomia real: km rodados dividido por litros abastecidos
     consumo_sum = consumo_df.groupby('placa').agg(
         km_min=('km', 'min'),
         km_max=('km', 'max'),
@@ -90,6 +89,33 @@ def plot_autonomia_real(consumo_df, abastecimento_df):
                  labels={'autonomia_real': 'Autonomia (Km/L)', 'placa': 'Placa'},
                  title='Autonomia Real (Km/L) por Veículo')
     return df, fig
+
+def plot_consumo_por_combustivel(abastecimentos):
+    df = abastecimentos.groupby(['combustivel']).agg(total_litros=('litros', 'sum')).reset_index()
+    fig = px.pie(df, values='total_litros', names='combustivel', title='Consumo Total por Tipo de Combustível')
+    return df, fig
+
+def plot_media_diaria_abastecimento(abastecimentos):
+    df = abastecimentos.copy()
+    df['data'] = pd.to_datetime(df['data'])
+    df_diario = df.groupby(['data']).agg(total_litros=('litros', 'sum')).reset_index()
+    df_diario['media_movel_7d'] = df_diario['total_litros'].rolling(window=7).mean()
+    fig = px.line(df_diario, x='data', y='total_litros', title='Consumo Diário de Litros')
+    fig.add_scatter(x=df_diario['data'], y=df_diario['media_movel_7d'], mode='lines', name='Média Móvel 7 dias')
+    return df_diario, fig
+
+def plot_tendencia_mensal(consumo_filt):
+    df = consumo_filt.copy()
+    df['mes'] = df['data'].dt.to_period('M')
+    df_mensal = df.groupby('mes').agg(
+        km_rodados=('km', lambda x: x.max() - x.min()),
+        litros_totais=('litros', 'sum')
+    ).reset_index()
+    df_mensal['consumo_medio'] = df_mensal.apply(
+        lambda r: r['km_rodados'] / r['litros_totais'] if r['litros_totais'] > 0 else None, axis=1)
+    df_mensal['mes'] = df_mensal['mes'].dt.to_timestamp()
+    fig = px.line(df_mensal, x='mes', y='consumo_medio', title='Tendência Mensal Consumo Médio (Km/L)')
+    return df_mensal, fig
 
 def save_fig_to_bytes(fig):
     img_bytes = pio.to_image(fig, format='png', width=700, height=400, scale=2)
@@ -114,7 +140,7 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, autonomia_df, fig1_bytes, fi
         linha = f"{row['placa']}: Km Rodados: {int(row['km_rodados'])}, Litros: {row['litros_totais']:.2f}, Consumo Médio: {row['consumo_medio_km_por_litro']:.2f}"
         c.drawString(50, y, linha)
         y -= 15
-        if y < 100:
+        if y < 150:
             c.showPage()
             y = height - 50
 
@@ -131,7 +157,7 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, autonomia_df, fig1_bytes, fi
         linha = f"{row['placa']}: Total Litros: {row['total_litros']:.2f}, Média Km: {int(row['media_km'])}, Registros: {row['registros']}"
         c.drawString(50, y, linha)
         y -= 15
-        if y < 100:
+        if y < 150:
             c.showPage()
             y = height - 50
 
@@ -149,7 +175,7 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, autonomia_df, fig1_bytes, fi
         linha = f"{row['placa']}: Autonomia Real: {autonomia}"
         c.drawString(50, y, linha)
         y -= 15
-        if y < 100:
+        if y < 150:
             c.showPage()
             y = height - 50
 
@@ -184,9 +210,12 @@ combust_selected = st.sidebar.multiselect("Tipos de Combustível", combust_unifi
 
 data_min = min(interno['data'].min(), externo['data'].min(), consumo['data'].min())
 data_max = max(interno['data'].max(), externo['data'].max(), consumo['data'].max())
-data_range = st.sidebar.date_input("Período", [data_min, data_max])
 
-data_start, data_end = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
+data_range = st.sidebar.date_input("Período", [data_min, data_max])
+if isinstance(data_range, (tuple, list)):
+    data_start, data_end = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
+else:
+    data_start = data_end = pd.to_datetime(data_range)
 
 # Filtrar dados
 interno_filt = interno[
@@ -211,7 +240,10 @@ consumo_filt = consumo[
     (consumo['placa'].isin(placas_selected)) &
     (consumo['data'] >= data_start) & (consumo['data'] <= data_end)
 ]
-consumo_filt.rename(columns={'qtd_litros': 'litros', 'km': 'km'}, inplace=True)
+
+if 'qtd_litros' in consumo_filt.columns:
+    consumo_filt.rename(columns={'qtd_litros': 'litros'}, inplace=True)
+
 consumo_filt['litros'] = consumo_filt['litros'].astype(str).str.replace(',', '.', regex=False)
 consumo_filt['km'] = consumo_filt['km'].astype(str).str.replace(',', '.', regex=False)
 consumo_filt['litros'] = pd.to_numeric(consumo_filt['litros'], errors='coerce')
@@ -219,7 +251,14 @@ consumo_filt['km'] = pd.to_numeric(consumo_filt['km'], errors='coerce')
 consumo_filt.dropna(subset=['litros', 'km'], inplace=True)
 
 # Abas com indicadores e gráficos
-tabs = st.tabs(["Resumo Consumo", "Abastecimento", "Autonomia Real", "Gráficos", "Relatório PDF"])
+tabs = st.tabs([
+    "Resumo Consumo",
+    "Abastecimento",
+    "Autonomia Real",
+    "Gráficos Gerais",
+    "Indicadores Extras",
+    "Relatório PDF"
+])
 
 with tabs[0]:
     resumo_consumo, fig1 = plot_consumo_medio(consumo_filt)
@@ -263,6 +302,28 @@ with tabs[3]:
     st.plotly_chart(fig3, use_container_width=True)
 
 with tabs[4]:
+    st.header("📈 Indicadores Extras")
+
+    df_combustivel, fig_combustivel = plot_consumo_por_combustivel(abastecimentos)
+    st.subheader("Consumo Total por Tipo de Combustível")
+    st.dataframe(df_combustivel.style.format({'total_litros': '{:,.2f}'}))
+    st.plotly_chart(fig_combustivel, use_container_width=True)
+
+    df_diario, fig_diario = plot_media_diaria_abastecimento(abastecimentos)
+    st.subheader("Consumo Diário e Média Móvel 7 dias")
+    st.dataframe(df_diario.style.format({'total_litros': '{:,.2f}', 'media_movel_7d': '{:,.2f}'}))
+    st.plotly_chart(fig_diario, use_container_width=True)
+
+    df_tendencia, fig_tendencia = plot_tendencia_mensal(consumo_filt)
+    st.subheader("Tendência Mensal Consumo Médio (Km/L)")
+    st.dataframe(df_tendencia.style.format({
+        'km_rodados': '{:,.0f}',
+        'litros_totais': '{:,.2f}',
+        'consumo_medio': '{:.2f}'
+    }))
+    st.plotly_chart(fig_tendencia, use_container_width=True)
+
+with tabs[5]:
     st.header("📄 Gerar Relatório PDF")
     if st.button("Gerar PDF com Indicadores e Gráficos"):
         fig1_bytes = save_fig_to_bytes(fig1)
