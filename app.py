@@ -10,9 +10,9 @@ def limpar_valor(valor):
     return float(valor)
 
 def carregar_dados(abastecimento_path):
-    # Carrega as abas conforme nomes exatos
-    df_interno = pd.read_excel(abastecimento_path, sheet_name='abastecimento interno')
-    df_externo = pd.read_excel(abastecimento_path, sheet_name='abastecimento externo')
+    # Usar os nomes das abas exatamente como você informou
+    df_interno = pd.read_excel(abastecimento_path, sheet_name='Abastecimento interno')
+    df_externo = pd.read_excel(abastecimento_path, sheet_name='Abastecimento externo')
     
     # Limpeza interno
     df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
@@ -36,7 +36,7 @@ def main():
     st.title("Dashboard Abastecimento Interno x Externo")
     
     st.sidebar.header("Upload do arquivo Excel")
-    arquivo = st.sidebar.file_uploader("Faça upload da planilha 'abastecimento.xlsx'", type=['xls', 'xlsx'])
+    arquivo = st.sidebar.file_uploader("Faça upload da planilha Excel com as abas 'Abastecimento interno' e 'Abastecimento externo'", type=['xls', 'xlsx'])
     
     if arquivo:
         df_interno, df_externo = carregar_dados(arquivo)
@@ -75,7 +75,7 @@ def main():
         col2.metric("Total Litros Externo", f"{total_litros_externo:.2f} L")
         col2.metric("Custo Médio Externo (R$/L)", f"R$ {custo_medio_externo:.2f}")
         
-        # Gráfico de evolução do custo total ao longo do tempo
+        # Gráfico evolução custo total ao longo do tempo
         st.subheader("Evolução do Custo Total (Interno x Externo)")
         
         df_interno_plot = df_interno.groupby('Data').agg({'Valor Total': 'sum'}).reset_index()
@@ -116,7 +116,7 @@ def main():
             st.write("Sem dados para gráfico.")
         
     else:
-        st.info("Faça upload da planilha Excel com abas 'abastecimento interno' e 'abastecimento externo' para visualizar os dados.")
+        st.info("Faça upload da planilha Excel com abas 'Abastecimento interno' e 'Abastecimento externo' para visualizar os dados.")
 
 if __name__ == "__main__":
     main()
