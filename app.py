@@ -1,322 +1,154 @@
 import streamlit as st
 import pandas as pd
-import unicodedata
 import plotly.express as px
-import re
 
-# -----------------------------
-# FUNÇÕES AUXILIARES
-# -----------------------------
-def normalizar_colunas(df):
-    df = df.copy()
-    df.columns = [
-        unicodedata.normalize("NFKD", str(col))
-        .encode("ASCII", "ignore")
-        .decode("utf-8")
-        .strip()
-        .lower()
-        .replace(" ", "_")
-        for col in df.columns
-    ]
-    return df
+st.set_page_config(page_title="Painel de Manutenção e Movimentação de Pneus", layout="wide")
 
-def limpar_valor_monetario(valor):
-    if pd.isna(valor):
-        return 0.0
-    if isinstance(valor, (int, float)):
-        return float(valor)
-    valor_str = str(valor)
-    # remove R$, espaços e pontos; troca vírgula por ponto
-    valor_limpo = re.sub(r"[R$\s\.]", "", valor_str)
-    valor_limpo = valor_limpo.replace(",", ".")
-    try:
-        return float(valor_limpo)
-    except:
-        return 0.0
+st.title("📊 Painel de Manutenção e Movimentação de Pneus")
+st.markdown("⬆️ Faça upload da planilha com as abas 'manutencao' e 'pneu' (movimentação)")
 
-def calcular_consumo_medio_simples(df, por_combustivel=False):
-    """
-    Calcula consumo médio por grupo usando:
-    (KM máximo - KM mínimo) / soma(total litros)
-    Se por_combustivel=True, agrupa por (placa, tipo_combustivel).
-    Retorna DataFrame com consumo_medio_km_l em alta precisão (float).
-    """
-    resultados = []
-    if df is None or df.empty:
-        cols = ["placa", "km_inicial", "km_final", "total_litros", "consumo_medio_km_l"]
-        if por_combustivel:
-            cols.insert(1, "tipo_combustivel")
-        return pd.DataFrame(columns=cols)
+uploaded_file = st.file_uploader("Upload da Planilha Excel", type=["xlsx"])
 
-    dff = df.copy()
-    dff["placa"] = dff["placa"].astype(str).str.upper().str.strip()
-    dff["km_atual"] = pd.to_numeric(dff.get("km_atual"), errors="coerce")
-    dff["quantidade_de_litros"] = pd.to_numeric(dff.get("quantidade_de_litros"), errors="coerce")
-    if "tipo_combustivel" in dff.columns:
-        dff["tipo_combustivel"] = dff["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
-    else:
-        dff["tipo_combustivel"] = "N/A"
+if uploaded_file:
+    xls = pd.ExcelFile(uploaded_file)
 
-    dff = dff.dropna(subset=["placa", "km_atual", "quantidade_de_litros"])
-    dff = dff[dff["quantidade_de_litros"] > 0]
+    if 'manutencao' in xls.sheet_names and 'pneu' in xls.sheet_names:
+        df_manut = pd.read_excel(xls, sheet_name='manutencao')
+        df_pneu = pd.read_excel(xls, sheet_name='pneu')
 
-    group_cols = ["placa"]
-    if por_combustivel and "tipo_combustivel" in dff.columns:
-        group_cols = ["placa", "tipo_combustivel"]
+        # Normaliza nomes colunas
+        df_manut.columns = df_manut.columns.str.strip().str.upper()
+        df_pneu.columns = df_pneu.columns.str.strip().str.upper()
 
-    for group_key, grupo in dff.groupby(group_cols):
-        if isinstance(group_key, tuple):
-            placa = group_key[0]
-            tipo = group_key[1] if len(group_key) > 1 else None
+        # Conversão de datas
+        date_cols_manut = [col for col in df_manut.columns if 'DATA' in col]
+        for c in date_cols_manut:
+            df_manut[c] = pd.to_datetime(df_manut[c], errors='coerce')
+
+        date_cols_pneu = [col for col in df_pneu.columns if 'DATA' in col]
+        for c in date_cols_pneu:
+            df_pneu[c] = pd.to_datetime(df_pneu[c], errors='coerce')
+
+        # Converter valores monetários para numérico (ex: VALOR)
+        if 'VALOR' in df_pneu.columns:
+            df_pneu['VALOR'] = pd.to_numeric(df_pneu['VALOR'], errors='coerce')
+
+        # Padronizar coluna PLACA
+        for df in [df_manut, df_pneu]:
+            if 'VEÍCULO - PLACA' in df.columns:
+                df.rename(columns={'VEÍCULO - PLACA': 'PLACA'}, inplace=True)
+
+        # Verificação colunas essenciais
+        if 'PLACA' not in df_manut.columns:
+            st.error("❌ Coluna obrigatória ausente: PLACA na aba 'manutencao'")
+        elif 'PLACA' not in df_pneu.columns:
+            st.error("❌ Coluna obrigatória ausente: PLACA na aba 'pneu'")
         else:
-            placa = group_key
-            tipo = grupo["tipo_combustivel"].iloc[0] if "tipo_combustivel" in grupo.columns else None
+            # Filtros: placas e datas
+            placas = sorted(set(df_manut['PLACA'].dropna().unique()) | set(df_pneu['PLACA'].dropna().unique()))
+            st.sidebar.header("Filtros")
+            selected_placas = st.sidebar.multiselect("Selecione as Placas", placas, default=placas)
 
-        km_inicial = grupo["km_atual"].min()
-        km_final = grupo["km_atual"].max()
-        total_litros = grupo["quantidade_de_litros"].sum()
+            # Filtro de datas
+            data_min_manut = df_manut['DATA DA MANUTENÇÃO'].min()
+            data_max_manut = df_manut['DATA DA MANUTENÇÃO'].max()
+            data_min_pneu = df_pneu['DATA DA MOVIMENTAÇÃO'].min()
+            data_max_pneu = df_pneu['DATA DA MOVIMENTAÇÃO'].max()
 
-        if pd.isna(km_inicial) or pd.isna(km_final) or total_litros <= 0:
-            continue
-        if km_final <= km_inicial:
-            continue
+            data_min = min(data_min_manut, data_min_pneu)
+            data_max = max(data_max_manut, data_max_pneu)
 
-        consumo_medio = (km_final - km_inicial) / total_litros
+            selected_data = st.sidebar.date_input("Intervalo de Datas", [data_min, data_max])
 
-        row = {
-            "placa": placa,
-            "km_inicial": float(km_inicial),
-            "km_final": float(km_final),
-            "total_litros": float(total_litros),
-            "consumo_medio_km_l": float(consumo_medio)
-        }
-        if por_combustivel:
-            row["tipo_combustivel"] = tipo
-        resultados.append(row)
+            # Aplica filtros
+            if selected_placas:
+                df_manut = df_manut[df_manut['PLACA'].isin(selected_placas)]
+                df_pneu = df_pneu[df_pneu['PLACA'].isin(selected_placas)]
 
-    df_res = pd.DataFrame(resultados)
-    if df_res.empty:
-        return df_res
-    df_res = df_res.sort_values("consumo_medio_km_l", ascending=False).reset_index(drop=True)
-    return df_res
+            if len(selected_data) == 2:
+                start_date, end_date = pd.to_datetime(selected_data[0]), pd.to_datetime(selected_data[1])
+                df_manut = df_manut[(df_manut['DATA DA MANUTENÇÃO'] >= start_date) & (df_manut['DATA DA MANUTENÇÃO'] <= end_date)]
+                df_pneu = df_pneu[(df_pneu['DATA DA MOVIMENTAÇÃO'] >= start_date) & (df_pneu['DATA DA MOVIMENTAÇÃO'] <= end_date)]
 
-# -----------------------------
-# DASHBOARD
-# -----------------------------
-st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
-st.title("📊 Dashboard de Abastecimento Interno x Externo — Cálculo KMmax-KMmin / Litros")
+            abas = st.tabs(["📊 Resumo Geral", "📈 Gráficos", "🔍 Detalhamento", "⚠️ Indicadores Pneus"])
 
-arquivo = st.file_uploader("📂 Envie a planilha de abastecimento (com abas 'interno' e 'externo')", type=["xlsx"])
+            with abas[0]:
+                st.subheader("📊 Indicadores Gerais")
 
-if not arquivo:
-    st.info("Envie a planilha .xlsx com as abas 'interno' e 'externo' para começar.")
-    st.stop()
+                # Total manutenções e pneus movimentados
+                total_manut = len(df_manut)
+                total_pneu = len(df_pneu)
 
-# Lê todas as abas
-abas = pd.read_excel(arquivo, sheet_name=None)
-nomes_abas = {nome.lower(): nome for nome in abas.keys()}
-nome_interno = next((n for n in nomes_abas if "interno" in n), None)
-nome_externo = next((n for n in nomes_abas if "externo" in n), None)
+                st.markdown(f"**Total de Manutenções no Período:** {total_manut}")
+                st.markdown(f"**Total de Movimentações de Pneus no Período:** {total_pneu}")
 
-if not (nome_interno and nome_externo):
-    st.error("Não foi possível encontrar as abas 'interno' e 'externo' na planilha.")
-    st.stop()
+                # Manutenções por tipo
+                if 'DESCRIÇÃO DA MANUTENÇÃO' in df_manut.columns:
+                    manut_counts = df_manut['DESCRIÇÃO DA MANUTENÇÃO'].value_counts().rename_axis('Tipo de Manutenção').reset_index(name='Quantidade')
+                    st.markdown("**Manutenções por Tipo:**")
+                    st.dataframe(manut_counts)
 
-# Normaliza
-df_interno = normalizar_colunas(abas[nomes_abas[nome_interno]])
-df_externo = normalizar_colunas(abas[nomes_abas[nome_externo]])
+                # Movimentação pneus por tipo
+                if 'TIPO DA MOVIMENTAÇÃO' in df_pneu.columns:
+                    pneu_counts = df_pneu['TIPO DA MOVIMENTAÇÃO'].value_counts().rename_axis('Tipo de Movimentação').reset_index(name='Quantidade')
+                    st.markdown("**Movimentação de Pneus por Tipo:**")
+                    st.dataframe(pneu_counts)
 
-# Parse datas (se existirem)
-if "data" in df_interno.columns:
-    df_interno["data"] = pd.to_datetime(df_interno["data"], errors="coerce", dayfirst=True)
-else:
-    df_interno["data"] = pd.NaT
+                # Valor gasto com pneus
+                if 'VALOR' in df_pneu.columns:
+                    total_valor = df_pneu['VALOR'].sum()
+                    st.markdown(f"**Valor Total Gasto com Pneus:** R$ {total_valor:,.2f}")
 
-if "data" in df_externo.columns:
-    df_externo["data"] = pd.to_datetime(df_externo["data"], errors="coerce", dayfirst=True)
-else:
-    df_externo["data"] = pd.NaT
+                # KM médio entre manutenções por veículo
+                if 'KM DO VEÍCULO' in df_manut.columns:
+                    km_medio = df_manut.groupby('PLACA')['KM DO VEÍCULO'].apply(lambda x: x.sort_values().diff().mean()).reset_index()
+                    km_medio.columns = ['PLACA', 'KM Médio Entre Manutenções']
+                    st.markdown("**KM Médio Entre Manutenções por Veículo:**")
+                    st.dataframe(km_medio)
 
-# Limpeza e padronização de colunas importantes
-def padronizar_df(df):
-    df = df.copy()
-    # Valores monetários
-    if "valor_total" in df.columns:
-        df["valor_total"] = df["valor_total"].apply(limpar_valor_monetario)
+            with abas[1]:
+                st.subheader("📈 Visualizações Gráficas")
+
+                # Manutenções por veículo ao longo do tempo
+                if not df_manut.empty:
+                    fig_manut = px.histogram(df_manut, x='DATA DA MANUTENÇÃO', color='PLACA',
+                                            title='Frequência de Manutenções por Veículo',
+                                            nbins=30)
+                    st.plotly_chart(fig_manut, use_container_width=True)
+
+                # Movimentação pneus por tipo
+                if 'TIPO DA MOVIMENTAÇÃO' in df_pneu.columns:
+                    fig_pneu = px.histogram(df_pneu, x='TIPO DA MOVIMENTAÇÃO', color='PLACA',
+                                            title='Movimentação de Pneus por Tipo e Veículo')
+                    st.plotly_chart(fig_pneu, use_container_width=True)
+
+                # Valor gasto em pneus por veículo
+                if 'VALOR' in df_pneu.columns:
+                    fig_valor = px.bar(df_pneu.groupby('PLACA')['VALOR'].sum().reset_index(),
+                                       x='PLACA', y='VALOR',
+                                       title='Valor Total Gasto em Pneus por Veículo')
+                    st.plotly_chart(fig_valor, use_container_width=True)
+
+            with abas[2]:
+                st.subheader("🔍 Detalhamento")
+
+                st.markdown("**Registros de Manutenção**")
+                st.dataframe(df_manut)
+
+                st.markdown("**Registros de Movimentação de Pneus**")
+                st.dataframe(df_pneu)
+
+            with abas[3]:
+                st.subheader("⚠️ Indicadores Específicos dos Pneus")
+
+                # Top 10 pneus com menor autonomia (se existir)
+                if 'AUTONOMIA' in df_pneu.columns:
+                    df_pneu['AUTONOMIA'] = pd.to_numeric(df_pneu['AUTONOMIA'], errors='coerce')
+                    df_piores = df_pneu.sort_values(by='AUTONOMIA').head(10)
+                    st.markdown("Top 10 Pneus com Menor Autonomia")
+                    st.dataframe(df_piores)
+                else:
+                    st.info("Coluna 'AUTONOMIA' não encontrada na aba 'pneu'.")
+
     else:
-        df["valor_total"] = 0.0
-
-    if "valor_unitario" in df.columns:
-        df["valor_unitario"] = df["valor_unitario"].apply(limpar_valor_monetario)
-    else:
-        df["valor_unitario"] = 0.0
-
-    # Placa / combustivel / numericos
-    df["placa"] = df.get("placa", pd.Series([""] * len(df))).astype(str).str.upper().str.strip()
-    if "tipo_combustivel" in df.columns:
-        df["tipo_combustivel"] = df["tipo_combustivel"].fillna("N/A").astype(str).str.upper().str.strip()
-    else:
-        df["tipo_combustivel"] = "N/A"
-
-    df["quantidade_de_litros"] = pd.to_numeric(df.get("quantidade_de_litros", pd.Series([pd.NA]*len(df))), errors="coerce")
-    df["km_atual"] = pd.to_numeric(df.get("km_atual", pd.Series([pd.NA]*len(df))), errors="coerce")
-
-    return df
-
-df_interno = padronizar_df(df_interno)
-df_externo = padronizar_df(df_externo)
-
-# Remover registros de entrada de tanque (placa '-') do interno, se houver
-if "placa" in df_interno.columns:
-    df_interno = df_interno[df_interno["placa"] != "-"]
-
-# FILTROS (global)
-st.sidebar.header("Filtros")
-# Datas combinadas
-combined_dates = pd.concat([df_interno["data"], df_externo["data"]]).dropna()
-if combined_dates.empty:
-    data_min = pd.to_datetime("today").date()
-    data_max = pd.to_datetime("today").date()
-else:
-    data_min = pd.to_datetime(combined_dates.min()).date()
-    data_max = pd.to_datetime(combined_dates.max()).date()
-
-data_inicio = st.sidebar.date_input("Data Início", value=data_min, min_value=data_min, max_value=data_max)
-data_fim = st.sidebar.date_input("Data Fim", value=data_max, min_value=data_min, max_value=data_max)
-if data_inicio > data_fim:
-    st.sidebar.error("Data Início não pode ser maior que Data Fim.")
-
-# Placas disponíveis (ignorando vazias e placeholders)
-placas = sorted(set(df_interno["placa"].dropna().unique()).union(set(df_externo["placa"].dropna().unique())))
-placas = [p for p in placas if p not in ("", "-", "N/A", "NA")]
-placa_selecionada = st.sidebar.selectbox("Selecione a Placa", ["Todas"] + placas)
-
-# Combustíveis disponíveis
-combustiveis = sorted(set(df_interno["tipo_combustivel"].unique()).union(set(df_externo["tipo_combustivel"].unique())))
-combustiveis = [c for c in combustiveis if c not in ("", "-", "N/A")]
-combustivel_selecionado = st.sidebar.selectbox("Selecione o Tipo de Combustível", ["Todos"] + combustiveis)
-
-# Caixa para checar uma placa específica (útil para validar cálculo)
-placa_para_checar = st.sidebar.text_input("Verificar placa (ex: OQG06668) — mostra passo a passo", value="").strip().upper()
-
-def aplicar_filtros(df):
-    dff = df.copy()
-    # Filtra por data (usa coluna data)
-    dff = dff[(dff["data"] >= pd.to_datetime(data_inicio)) & (dff["data"] <= pd.to_datetime(data_fim))]
-    if placa_selecionada != "Todas":
-        dff = dff[dff["placa"] == placa_selecionada]
-    if combustivel_selecionado != "Todos":
-        dff = dff[dff["tipo_combustivel"] == combustivel_selecionado]
-    return dff
-
-df_interno_f = aplicar_filtros(df_interno)
-df_externo_f = aplicar_filtros(df_externo)
-
-# Combined (interno + externo) após filtros
-df_combinado_f = pd.concat([df_interno_f, df_externo_f], ignore_index=True)
-
-# Totais
-total_litros_interno = df_interno_f["quantidade_de_litros"].sum()
-total_litros_externo = df_externo_f["quantidade_de_litros"].sum()
-total_valor_interno = df_interno_f["valor_total"].sum()
-total_valor_externo = df_externo_f["valor_total"].sum()
-
-# Cálculos de consumo (novo método simples)
-consumo_interno = calcular_consumo_medio_simples(df_interno_f, por_combustivel=False)
-consumo_externo = calcular_consumo_medio_simples(df_externo_f, por_combustivel=False)
-consumo_combinado = calcular_consumo_medio_simples(df_combinado_f, por_combustivel=False)
-
-# TABS
-tabs = st.tabs(["📈 Visão Geral", "🏭 Interno", "⛽ Externo", "🔀 Combinado", "🔎 Checar Placa"])
-
-with tabs[0]:
-    st.subheader("Indicadores Principais")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("🚛 Litros Interno", f"{total_litros_interno:,.2f} L")
-    col2.metric("⛽ Litros Externo", f"{total_litros_externo:,.2f} L")
-    col3.metric("💰 Valor Interno", f"R$ {total_valor_interno:,.2f}")
-    col4.metric("💵 Valor Externo", f"R$ {total_valor_externo:,.2f}")
-    col5.metric("📊 Média Combinada (km/l)",
-                f"{consumo_combinado['consumo_medio_km_l'].mean():.3f}" if not consumo_combinado.empty else "-")
-
-    st.markdown("**Top Consumo Combinado (Top 10)**")
-    if not consumo_combinado.empty:
-        st.table(consumo_combinado.head(10).style.format({"consumo_medio_km_l": "{:.9f}"}))
-    else:
-        st.write("Sem dados suficientes para cálculo.")
-
-with tabs[1]:
-    st.subheader("🏭 Abastecimento Interno")
-    if not df_interno_f.empty:
-        agg_placa = df_interno_f.groupby("placa")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
-        st.plotly_chart(px.bar(agg_placa, x="placa", y="quantidade_de_litros", title="Litros por Veículo (Interno)"), use_container_width=True)
-        st.markdown("**Consumo Médio (Interno)**")
-        if not consumo_interno.empty:
-            st.table(consumo_interno.style.format({"consumo_medio_km_l": "{:.9f}"}))
-        else:
-            st.write("Sem dados suficientes para cálculo (Interno).")
-        with st.expander("Ver tabela detalhada (Interno)"):
-            st.dataframe(df_interno_f)
-    else:
-        st.info("Sem registros internos no período/filtros selecionados.")
-
-with tabs[2]:
-    st.subheader("⛽ Abastecimento Externo")
-    if not df_externo_f.empty:
-        agg_placa = df_externo_f.groupby("placa")["quantidade_de_litros"].sum().reset_index().sort_values(by="quantidade_de_litros", ascending=False)
-        st.plotly_chart(px.bar(agg_placa, x="placa", y="quantidade_de_litros", title="Litros por Veículo (Externo)"), use_container_width=True)
-        st.markdown("**Consumo Médio (Externo)**")
-        if not consumo_externo.empty:
-            st.table(consumo_externo.style.format({"consumo_medio_km_l": "{:.9f}"}))
-        else:
-            st.write("Sem dados suficientes para cálculo (Externo).")
-        with st.expander("Ver tabela detalhada (Externo)"):
-            st.dataframe(df_externo_f)
-    else:
-        st.info("Sem registros externos no período/filtros selecionados.")
-
-with tabs[3]:
-    st.subheader("🔀 Consumo Médio Combinado (Interno + Externo)")
-    st.markdown("**Método:** (KM máximo - KM mínimo) ÷ Soma dos litros no período filtrado.")
-    if not consumo_combinado.empty:
-        st.table(consumo_combinado.style.format({"consumo_medio_km_l": "{:.9f}"}))
-        fig = px.bar(consumo_combinado, x="placa", y="consumo_medio_km_l", title="Consumo Médio Combinado por Placa")
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("Sem dados suficientes para cálculo combinado com os filtros aplicados.")
-
-with tabs[4]:
-    st.subheader("🔎 Checagem por Placa")
-    st.markdown("Coloque a placa que você quer verificar (ex.: `OQG06668`). O app mostrará os registros usados no cálculo e o passo a passo.")
-    placa_checar = placa_para_checar
-    if placa_checar:
-        placa_checar = placa_checar.upper().strip()
-        dados_placa = df_combinado_f[df_combinado_f["placa"] == placa_checar].copy()
-        if dados_placa.empty:
-            st.warning(f"Nenhum registro encontrado para a placa {placa_checar} com os filtros atuais.")
-        else:
-            # mostra registros ordenados por data e km
-            if "data" in dados_placa.columns:
-                dados_placa = dados_placa.sort_values(["data", "km_atual"])
-            else:
-                dados_placa = dados_placa.sort_values("km_atual")
-            st.markdown("**Registros usados:**")
-            st.dataframe(dados_placa)
-
-            km_inicial = float(dados_placa["km_atual"].min())
-            km_final = float(dados_placa["km_atual"].max())
-            total_litros = float(dados_placa["quantidade_de_litros"].sum())
-            consumo = None
-            if total_litros > 0 and km_final > km_inicial:
-                consumo = (km_final - km_inicial) / total_litros
-
-            st.markdown("**Passo a passo do cálculo:**")
-            st.write(f"- KM inicial (mínimo): `{km_inicial}`")
-            st.write(f"- KM final (máximo): `{km_final}`")
-            st.write(f"- Total de litros (soma): `{total_litros}`")
-            if consumo is not None:
-                st.write(f"- Consumo médio = (km_final - km_inicial) / total_litros = `{consumo:.9f}` km/l")
-            else:
-                st.warning("Não foi possível calcular o consumo médio para esta placa com os dados fornecidos.")
-    else:
-        st.info("Digite uma placa para checar o cálculo detalhado.")
+        st.error("❌ A planilha deve conter as abas 'manutencao' e 'pneu'.")
