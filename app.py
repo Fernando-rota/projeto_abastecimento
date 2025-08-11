@@ -3,7 +3,45 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-# (Mantém o código anterior, incluindo load_data, clean_valor, etc.)
+st.set_page_config(page_title="Dashboard de Abastecimento e Consumo", layout="wide")
+
+@st.cache_data
+def load_data(uploaded_file):
+    xls = pd.ExcelFile(uploaded_file)
+    df_interno = pd.read_excel(xls, 'interno')
+    df_externo = pd.read_excel(xls, 'externo')
+    df_consumo = pd.read_excel(xls, 'consumo')
+
+    # Converter datas
+    df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
+    df_externo['Data'] = pd.to_datetime(df_externo['Data'], dayfirst=True, errors='coerce')
+    df_consumo['DATA'] = pd.to_datetime(df_consumo['DATA'], dayfirst=True, errors='coerce')
+
+    # Converter litros
+    df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce')
+    df_externo['Quantidade de litros'] = pd.to_numeric(df_externo['Quantidade de litros'], errors='coerce')
+    df_consumo['QTD LITROS'] = pd.to_numeric(df_consumo['QTD LITROS'], errors='coerce')
+
+    # Função para limpar valor (ex: "R$ 3,33" -> 3.33 float)
+    def clean_valor(valor):
+        if pd.isna(valor):
+            return np.nan
+        if isinstance(valor, (int, float)):
+            return float(valor)
+        if isinstance(valor, str):
+            valor = valor.replace('R$', '').replace('.', '').replace(',', '.').strip()
+            try:
+                return float(valor)
+            except:
+                return np.nan
+        return np.nan
+
+    df_externo['Valor Unitario'] = df_externo['Valor Unitario'].apply(clean_valor)
+    df_externo['Valor Total'] = df_externo['Valor Total'].apply(clean_valor)
+    df_interno['Valor Unitario'] = df_interno['Valor Unitario'].apply(clean_valor)
+    df_interno['Valor Total'] = df_interno['Valor Total'].apply(clean_valor)
+
+    return df_interno, df_externo, df_consumo
 
 def calcula_eficiencia(df_consumo):
     # Consumo médio litros por km rodado (km/litro)
@@ -65,9 +103,56 @@ def main():
     df_externo_f = filtrar(df_externo, 'Data', 'Placa', 'Tipo Combustivel', 'Quantidade de litros')
     df_consumo_f = filtrar(df_consumo, 'DATA', 'PLACA', 'TIPO', 'QTD LITROS')
 
-    # Indicadores resumidos (mantém os anteriores)
+    # Indicadores resumidos
+    def indicadores(df, litros_col='Quantidade de litros', valor_col='Valor Total'):
+        total_litros = df[litros_col].sum()
+        total_valor = df[valor_col].sum() if valor_col in df.columns else np.nan
+        valor_medio_litro = total_valor / total_litros if total_litros > 0 else np.nan
+        return {
+            "Total litros": total_litros,
+            "Total valor (R$)": total_valor,
+            "Valor médio por litro (R$)": valor_medio_litro,
+        }
 
-    # --- Nova seção: Eficiência ---
+    ind_interno = indicadores(df_interno_f)
+    ind_externo = indicadores(df_externo_f)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Abastecimento Interno")
+        st.metric("Total litros", f"{ind_interno['Total litros']:.2f}")
+        st.metric("Total gasto (R$)", f"{ind_interno['Total valor (R$)']:.2f}")
+        st.metric("Valor médio por litro (R$)", f"{ind_interno['Valor médio por litro (R$)']:.2f}")
+    with col2:
+        st.subheader("Abastecimento Externo")
+        st.metric("Total litros", f"{ind_externo['Total litros']:.2f}")
+        st.metric("Total gasto (R$)", f"{ind_externo['Total valor (R$)']:.2f}")
+        st.metric("Valor médio por litro (R$)", f"{ind_externo['Valor médio por litro (R$)']:.2f}")
+
+    # Gráficos consumo por data e combustível
+    st.header("Gráficos de Consumo")
+
+    fig1 = px.line(df_consumo_f, x='DATA', y='QTD LITROS', color='TIPO',
+                   title="Consumo de litros por tipo de combustível ao longo do tempo",
+                   labels={"DATA": "Data", "QTD LITROS": "Litros", "TIPO": "Combustível"})
+    st.plotly_chart(fig1, use_container_width=True)
+
+    st.header("Comparação Litros Interno x Externo")
+
+    df_interno_sum = df_interno_f.groupby(['Data', 'Tipo Combustivel']).agg({'Quantidade de litros': 'sum'}).reset_index()
+    df_externo_sum = df_externo_f.groupby(['Data', 'Tipo Combustivel']).agg({'Quantidade de litros': 'sum'}).reset_index()
+
+    df_interno_sum['Origem'] = 'Interno'
+    df_externo_sum['Origem'] = 'Externo'
+
+    df_comparacao = pd.concat([df_interno_sum, df_externo_sum])
+
+    fig2 = px.bar(df_comparacao, x='Data', y='Quantidade de litros', color='Origem', barmode='group',
+                  facet_col='Tipo Combustivel',
+                  title="Comparação de litros abastecidos interno x externo por tipo combustível")
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # --- Nova seção: Eficiência e Custo ---
     st.header("Análise de Eficiência e Custo")
 
     df_eficiencia = calcula_eficiencia(df_consumo_f)
@@ -83,22 +168,19 @@ def main():
     else:
         st.info("Dados insuficientes para cálculo de eficiência.")
 
-    # Custo médio por km rodado (usando interno + externo)
-    df_combined = pd.concat([df_interno_f.rename(columns={'Quantidade de litros': 'litros', 'Valor Total': 'valor'}),
-                             df_externo_f.rename(columns={'Quantidade de litros': 'litros', 'Valor Total': 'valor'})],
-                            ignore_index=True)
+    # Custo médio por km rodado (interno + externo)
+    df_combined = pd.concat([
+        df_interno_f.rename(columns={'Quantidade de litros': 'litros', 'Valor Total': 'valor'}),
+        df_externo_f.rename(columns={'Quantidade de litros': 'litros', 'Valor Total': 'valor'})
+    ], ignore_index=True)
 
     custo_por_placa = []
     for placa in placas_selecionadas:
         df_placa = df_combined[df_combined['Placa'] == placa]
         litros_total = df_placa['litros'].sum()
         valor_total = df_placa['valor'].sum()
-        if litros_total > 0:
-            custo_litro = valor_total / litros_total
-        else:
-            custo_litro = np.nan
+        custo_litro = valor_total / litros_total if litros_total > 0 else np.nan
 
-        # km rodados na tabela consumo
         df_km = df_consumo_f[df_consumo_f['PLACA'] == placa]
         km_rodados = df_km['KM'].max() - df_km['KM'].min() if not df_km.empty else np.nan
 
@@ -117,14 +199,12 @@ def main():
     st.subheader("Custo Médio por Placa")
     st.dataframe(df_custo)
 
-    # Gráfico comparativo custo por km
     fig_custo = px.bar(df_custo, x='Placa', y='Custo Médio por Km Rodado (R$)', title='Custo Médio por Km Rodado por Placa')
     st.plotly_chart(fig_custo, use_container_width=True)
 
-    # Gráfico de distribuição tipos de combustível
+    # Distribuição combustível
     st.header("Distribuição de Combustíveis Consumidos")
 
-    # Somar litros por tipo combustível nas 3 bases filtradas
     litros_por_combustivel = pd.concat([
         df_interno_f.groupby('Tipo Combustivel')['Quantidade de litros'].sum(),
         df_externo_f.groupby('Tipo Combustivel')['Quantidade de litros'].sum(),
@@ -135,7 +215,15 @@ def main():
                       title='Distribuição de litros por tipo de combustível')
     st.plotly_chart(fig_dist, use_container_width=True)
 
-    # Mantém as visualizações e indicadores anteriores...
+    # Visualização dos dados tabulares
+    st.header("Visualização dos Dados Filtrados")
+    aba = st.radio("Selecione a aba para visualizar os dados:", options=["Interno", "Externo", "Consumo"])
+    if aba == "Interno":
+        st.dataframe(df_interno_f)
+    elif aba == "Externo":
+        st.dataframe(df_externo_f)
+    else:
+        st.dataframe(df_consumo_f)
 
 if __name__ == "__main__":
     main()
