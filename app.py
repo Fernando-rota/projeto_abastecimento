@@ -17,12 +17,8 @@ def load_data(file):
     return interno, externo, consumo
 
 def calcular_consumo_medio(df):
-    """
-    Calcula o consumo médio (km/l) para cada placa,
-    usando o menor e maior KM registrados na aba 'consumo'.
-    """
+    df = df.rename(columns=lambda x: x.strip())  # tira espaços
     resultados = []
-    df = df.rename(columns=lambda x: x.strip())  # tira espaços nas colunas
     for placa, grupo in df.groupby("PLACA"):
         grupo = grupo.dropna(subset=["KM", "QTD LITROS"])
         if len(grupo) < 2:
@@ -43,9 +39,13 @@ def calcular_consumo_medio(df):
     return pd.DataFrame(resultados)
 
 def fig_to_image(fig):
-    """Converte gráfico Plotly para PNG em bytes para o PPTX"""
-    png_bytes = pio.to_image(fig, format="png", width=900, height=500, scale=2)
-    return io.BytesIO(png_bytes)
+    try:
+        png_bytes = pio.to_image(fig, format="png", width=900, height=500, scale=2)
+        return io.BytesIO(png_bytes)
+    except RuntimeError as e:
+        st.error("Erro ao gerar imagem PNG do gráfico. Isso pode acontecer porque o Kaleido precisa do Google Chrome instalado para funcionar.\n"
+                 "Instale o Chrome no seu sistema para gerar os PPTX com gráficos.\n\nErro completo:\n" + str(e))
+        return None
 
 def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimento, consumo_medio_df, fig_consumo_medio):
     prs = Presentation()
@@ -57,8 +57,9 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
     tf1.text = "Resumo Consumo Interno\n\n" + resumo_consumo.to_string(index=False)
 
     # Slide 2 - Gráfico Consumo Interno
-    slide2 = prs.slides.add_slide(prs.slide_layouts[5])
-    slide2.shapes.add_picture(fig_to_image(fig_consumo), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+    if fig_consumo is not None:
+        slide2 = prs.slides.add_slide(prs.slide_layouts[5])
+        slide2.shapes.add_picture(fig_to_image(fig_consumo), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     # Slide 3 - Resumo Abastecimento Externo
     slide3 = prs.slides.add_slide(prs.slide_layouts[5])
@@ -67,8 +68,9 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
     tf3.text = "Resumo Abastecimento Externo\n\n" + resumo_abastecimento.to_string(index=False)
 
     # Slide 4 - Gráfico Abastecimento Externo
-    slide4 = prs.slides.add_slide(prs.slide_layouts[5])
-    slide4.shapes.add_picture(fig_to_image(fig_abastecimento), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+    if fig_abastecimento is not None:
+        slide4 = prs.slides.add_slide(prs.slide_layouts[5])
+        slide4.shapes.add_picture(fig_to_image(fig_abastecimento), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     # Slide 5 - Consumo Médio
     slide5 = prs.slides.add_slide(prs.slide_layouts[5])
@@ -77,8 +79,9 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
     tf5.text = "Consumo Médio Real (km/l)\n\n" + consumo_medio_df.to_string(index=False)
 
     # Slide 6 - Gráfico Consumo Médio
-    slide6 = prs.slides.add_slide(prs.slide_layouts[5])
-    slide6.shapes.add_picture(fig_to_image(fig_consumo_medio), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+    if fig_consumo_medio is not None:
+        slide6 = prs.slides.add_slide(prs.slide_layouts[5])
+        slide6.shapes.add_picture(fig_to_image(fig_consumo_medio), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     pptx_io = io.BytesIO()
     prs.save(pptx_io)
@@ -90,43 +93,43 @@ file = st.file_uploader("📂 Envie o arquivo Excel (.xlsx)", type=["xlsx"])
 if file:
     interno, externo, consumo = load_data(file)
 
-    # Padronizar nomes colunas
     interno.columns = interno.columns.str.strip()
     externo.columns = externo.columns.str.strip()
     consumo.columns = consumo.columns.str.strip()
 
-    # Resumo Consumo Interno
-    resumo_consumo = interno.groupby("Placa")["Quantidade de litros"].sum().reset_index()
-    fig_consumo = px.bar(resumo_consumo, x="Placa", y="Quantidade de litros",
-                         title="Consumo Interno", text_auto=True)
+    # Criar abas no Streamlit
+    tab1, tab2, tab3 = st.tabs(["Consumo Interno", "Abastecimento Externo", "Consumo Médio Real"])
 
-    # Resumo Abastecimento Externo
-    resumo_abastecimento = externo.groupby("Placa")["Quantidade de litros"].sum().reset_index()
-    fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Quantidade de litros",
-                              title="Abastecimento Externo", text_auto=True)
+    with tab1:
+        resumo_consumo = interno.groupby("Placa")["Quantidade de litros"].sum().reset_index()
+        fig_consumo = px.bar(resumo_consumo, x="Placa", y="Quantidade de litros",
+                             title="Consumo Interno", text_auto=True)
+        st.dataframe(resumo_consumo)
+        st.plotly_chart(fig_consumo, use_container_width=True)
 
-    # Consumo médio real (aba 'consumo')
-    consumo_medio_df = calcular_consumo_medio(consumo)
-    fig_consumo_medio = px.bar(consumo_medio_df, x="PLACA", y="Consumo Médio (km/l)",
-                              title="Consumo Médio Real (Menor/Maior KM)", text_auto=True)
+    with tab2:
+        resumo_abastecimento = externo.groupby("Placa")["Quantidade de litros"].sum().reset_index()
+        fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Quantidade de litros",
+                                  title="Abastecimento Externo", text_auto=True)
+        st.dataframe(resumo_abastecimento)
+        st.plotly_chart(fig_abastecimento, use_container_width=True)
 
-    # Exibir no Streamlit
-    st.subheader("📊 Consumo Interno")
-    st.dataframe(resumo_consumo)
-    st.plotly_chart(fig_consumo, use_container_width=True)
+    with tab3:
+        consumo_medio_df = calcular_consumo_medio(consumo)
+        fig_consumo_medio = px.bar(consumo_medio_df, x="PLACA", y="Consumo Médio (km/l)",
+                                  title="Consumo Médio Real (Menor/Maior KM)", text_auto=True)
+        st.dataframe(consumo_medio_df)
+        st.plotly_chart(fig_consumo_medio, use_container_width=True)
 
-    st.subheader("📊 Abastecimento Externo")
-    st.dataframe(resumo_abastecimento)
-    st.plotly_chart(fig_abastecimento, use_container_width=True)
-
-    st.subheader("📊 Consumo Médio Real (km/l)")
-    st.dataframe(consumo_medio_df)
-    st.plotly_chart(fig_consumo_medio, use_container_width=True)
-
-    # Criar PPTX para download
-    pptx_file = criar_ppt(resumo_consumo, fig_consumo,
-                         resumo_abastecimento, fig_abastecimento,
-                         consumo_medio_df, fig_consumo_medio)
+    # Criar PPTX para download (usar as figuras dos tabs)
+    pptx_file = criar_ppt(
+        resumo_consumo if 'resumo_consumo' in locals() else pd.DataFrame(),
+        fig_consumo if 'fig_consumo' in locals() else None,
+        resumo_abastecimento if 'resumo_abastecimento' in locals() else pd.DataFrame(),
+        fig_abastecimento if 'fig_abastecimento' in locals() else None,
+        consumo_medio_df if 'consumo_medio_df' in locals() else pd.DataFrame(),
+        fig_consumo_medio if 'fig_consumo_medio' in locals() else None
+    )
 
     st.download_button(
         label="📥 Baixar Relatório PPTX",
