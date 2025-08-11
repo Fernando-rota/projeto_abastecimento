@@ -8,8 +8,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.utils import ImageReader
 from datetime import datetime
 
-st.set_page_config(page_title="Relatório PDF Consumo e Abastecimento", layout="wide")
-st.title("📊 BI Consumo e Abastecimento + Exportação PDF")
+st.set_page_config(page_title="Dashboard Consumo e Abastecimento", layout="wide")
 
 @st.cache_data
 def load_data(file_path):
@@ -53,10 +52,9 @@ def plot_consumo_medio(consumo_filt):
     resumo_consumo['consumo_medio_km_por_litro'] = resumo_consumo.apply(
         lambda r: r['km_rodados'] / r['litros_totais'] if r['litros_totais'] > 0 else None, axis=1)
     resumo_consumo = resumo_consumo.sort_values('consumo_medio_km_por_litro', ascending=False)
-
     fig = px.bar(resumo_consumo, x='placa', y='consumo_medio_km_por_litro',
-                 labels={'consumo_medio_km_por_litro': 'Km por Litro', 'placa': 'Placa'},
-                 title='Consumo Médio (Km por Litro) por Veículo')
+                 labels={'consumo_medio_km_por_litro': 'Km/Litro', 'placa': 'Placa'},
+                 title='Consumo Médio (Km/Litro) por Veículo')
     return resumo_consumo, fig
 
 def plot_litros_total(abastecimentos):
@@ -67,14 +65,37 @@ def plot_litros_total(abastecimentos):
     ).reset_index()
     fig = px.bar(resumo_ab, x='placa', y='total_litros',
                  labels={'total_litros': 'Total Litros', 'placa': 'Placa'},
-                 title='Total de Litros Consumidos por Veículo')
+                 title='Total Litros Consumidos por Veículo')
     return resumo_ab, fig
+
+def plot_autonomia_real(consumo_df, abastecimento_df):
+    # Juntando consumo real e abastecimentos para comparar autonomia
+    # Vamos calcular autonomia real: km rodados dividido por litros abastecidos
+    consumo_sum = consumo_df.groupby('placa').agg(
+        km_min=('km', 'min'),
+        km_max=('km', 'max'),
+        litros_consumo=('litros', 'sum')
+    ).reset_index()
+    consumo_sum['km_rodados'] = consumo_sum['km_max'] - consumo_sum['km_min']
+
+    abastecimento_sum = abastecimento_df.groupby('placa').agg(
+        litros_abastecidos=('litros', 'sum')
+    ).reset_index()
+
+    df = pd.merge(consumo_sum, abastecimento_sum, on='placa', how='left')
+    df['autonomia_real'] = df.apply(lambda r: r['km_rodados'] / r['litros_abastecidos']
+                                   if r['litros_abastecidos'] and r['litros_abastecidos'] > 0 else None, axis=1)
+
+    fig = px.bar(df.sort_values('autonomia_real', ascending=False), x='placa', y='autonomia_real',
+                 labels={'autonomia_real': 'Autonomia (Km/L)', 'placa': 'Placa'},
+                 title='Autonomia Real (Km/L) por Veículo')
+    return df, fig
 
 def save_fig_to_bytes(fig):
     img_bytes = pio.to_image(fig, format='png', width=700, height=400, scale=2)
     return io.BytesIO(img_bytes)
 
-def gerar_pdf(resumo_consumo, resumo_abastecimento, fig1_bytes, fig2_bytes):
+def gerar_pdf(resumo_consumo, resumo_abastecimento, autonomia_df, fig1_bytes, fig2_bytes, fig3_bytes):
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
@@ -84,10 +105,9 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, fig1_bytes, fig2_bytes):
     c.setFont("Helvetica", 10)
     c.drawString(50, height - 70, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
 
-    # Consumo médio tabela
+    # Consumo médio
     c.setFont("Helvetica-Bold", 12)
-    c.drawString(50, height - 100, "Consumo Médio (Km por Litro) por Veículo")
-
+    c.drawString(50, height - 100, "Consumo Médio (Km/L) por Veículo")
     y = height - 120
     c.setFont("Helvetica", 9)
     for i, row in resumo_consumo.iterrows():
@@ -98,15 +118,13 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, fig1_bytes, fig2_bytes):
             c.showPage()
             y = height - 50
 
-    # Inserir gráfico consumo médio
     c.showPage()
     c.drawImage(ImageReader(fig1_bytes), 50, height/2 - 100, width=width-100, height=300)
 
-    # Página seguinte - Abastecimento total litros
+    # Abastecimento total litros
     c.showPage()
     c.setFont("Helvetica-Bold", 12)
     c.drawString(50, height - 50, "Total Litros Consumidos por Veículo")
-
     y = height - 70
     c.setFont("Helvetica", 9)
     for i, row in resumo_abastecimento.iterrows():
@@ -117,69 +135,94 @@ def gerar_pdf(resumo_consumo, resumo_abastecimento, fig1_bytes, fig2_bytes):
             c.showPage()
             y = height - 50
 
-    # Inserir gráfico litros total
     c.showPage()
     c.drawImage(ImageReader(fig2_bytes), 50, height/2 - 100, width=width-100, height=300)
+
+    # Autonomia real
+    c.showPage()
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(50, height - 50, "Autonomia Real (Km/L) por Veículo")
+    y = height - 70
+    c.setFont("Helvetica", 9)
+    for i, row in autonomia_df.iterrows():
+        autonomia = f"{row['autonomia_real']:.2f}" if pd.notna(row['autonomia_real']) else "N/A"
+        linha = f"{row['placa']}: Autonomia Real: {autonomia}"
+        c.drawString(50, y, linha)
+        y -= 15
+        if y < 100:
+            c.showPage()
+            y = height - 50
+
+    c.showPage()
+    c.drawImage(ImageReader(fig3_bytes), 50, height/2 - 100, width=width-100, height=300)
 
     c.save()
     buffer.seek(0)
     return buffer
 
+st.title("🚛 Dashboard de Consumo e Abastecimento")
+
 uploaded_file = st.file_uploader("📁 Faça upload do arquivo Excel com abas: interno, externo, consumo", type=["xlsx"])
-if uploaded_file:
-    interno, externo, consumo = load_data(uploaded_file)
+if not uploaded_file:
+    st.info("Por favor, faça upload do arquivo Excel para começar.")
+    st.stop()
 
-    placas_unicas = sorted(set(interno['placa'].dropna().unique()) |
-                          set(externo['placa'].dropna().unique()) |
-                          set(consumo['placa'].dropna().unique()))
-    placas_selected = st.multiselect("Selecione placas:", placas_unicas, default=placas_unicas)
+interno, externo, consumo = load_data(uploaded_file)
 
-    combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
-    combust_externo = externo['tipo_combustivel'].dropna().unique() if 'tipo_combustivel' in externo.columns else []
-    combust_unificados = sorted(set(combust_interno) | set(combust_externo))
-    combust_selected = st.multiselect("Selecione tipos de combustível:", combust_unificados, default=combust_unificados)
+# Sidebar com filtros
+st.sidebar.header("Filtros Globais")
 
-    data_min = min(interno['data'].min(), externo['data'].min(), consumo['data'].min())
-    data_max = max(interno['data'].max(), externo['data'].max(), consumo['data'].max())
-    data_range = st.date_input("Selecione período:", [data_min, data_max])
+placas_unicas = sorted(set(interno['placa'].dropna().unique()) |
+                      set(externo['placa'].dropna().unique()) |
+                      set(consumo['placa'].dropna().unique()))
+placas_selected = st.sidebar.multiselect("Placas", placas_unicas, default=placas_unicas)
 
-    data_start, data_end = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
+combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
+combust_externo = externo['tipo_combustivel'].dropna().unique() if 'tipo_combustivel' in externo.columns else []
+combust_unificados = sorted(set(combust_interno) | set(combust_externo))
+combust_selected = st.sidebar.multiselect("Tipos de Combustível", combust_unificados, default=combust_unificados)
 
-    interno_filt = interno[
-        (interno['placa'].isin(placas_selected)) &
-        (interno['data'] >= data_start) & (interno['data'] <= data_end)
-    ]
-    externo_filt = externo[
-        (externo['placa'].isin(placas_selected)) &
-        (externo['data'] >= data_start) & (externo['data'] <= data_end)
-    ]
+data_min = min(interno['data'].min(), externo['data'].min(), consumo['data'].min())
+data_max = max(interno['data'].max(), externo['data'].max(), consumo['data'].max())
+data_range = st.sidebar.date_input("Período", [data_min, data_max])
 
-    if 'tipo' in interno_filt.columns:
-        interno_filt = interno_filt[interno_filt['tipo'].isin(combust_selected)]
-    if 'tipo_combustivel' in externo_filt.columns:
-        externo_filt = externo_filt[externo_filt['tipo_combustivel'].isin(combust_selected)]
+data_start, data_end = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
 
-    interno_proc = preprocess_abastecimentos(interno_filt, 'quantidade_de_litros', 'km_atual', 'tipo')
-    externo_proc = preprocess_abastecimentos(externo_filt, 'quantidade_de_litros', 'km_atual', 'tipo_combustivel')
+# Filtrar dados
+interno_filt = interno[
+    (interno['placa'].isin(placas_selected)) &
+    (interno['data'] >= data_start) & (interno['data'] <= data_end)
+]
+externo_filt = externo[
+    (externo['placa'].isin(placas_selected)) &
+    (externo['data'] >= data_start) & (externo['data'] <= data_end)
+]
 
-    abastecimentos = pd.concat([interno_proc, externo_proc], ignore_index=True)
+if 'tipo' in interno_filt.columns:
+    interno_filt = interno_filt[interno_filt['tipo'].isin(combust_selected)]
+if 'tipo_combustivel' in externo_filt.columns:
+    externo_filt = externo_filt[externo_filt['tipo_combustivel'].isin(combust_selected)]
 
-    resumo_ab, fig2 = plot_litros_total(abastecimentos)
+interno_proc = preprocess_abastecimentos(interno_filt, 'quantidade_de_litros', 'km_atual', 'tipo')
+externo_proc = preprocess_abastecimentos(externo_filt, 'quantidade_de_litros', 'km_atual', 'tipo_combustivel')
+abastecimentos = pd.concat([interno_proc, externo_proc], ignore_index=True)
 
-    consumo_filt = consumo[
-        (consumo['placa'].isin(placas_selected)) &
-        (consumo['data'] >= data_start) & (consumo['data'] <= data_end)
-    ]
+consumo_filt = consumo[
+    (consumo['placa'].isin(placas_selected)) &
+    (consumo['data'] >= data_start) & (consumo['data'] <= data_end)
+]
+consumo_filt.rename(columns={'qtd_litros': 'litros', 'km': 'km'}, inplace=True)
+consumo_filt['litros'] = consumo_filt['litros'].astype(str).str.replace(',', '.', regex=False)
+consumo_filt['km'] = consumo_filt['km'].astype(str).str.replace(',', '.', regex=False)
+consumo_filt['litros'] = pd.to_numeric(consumo_filt['litros'], errors='coerce')
+consumo_filt['km'] = pd.to_numeric(consumo_filt['km'], errors='coerce')
+consumo_filt.dropna(subset=['litros', 'km'], inplace=True)
 
-    consumo_filt.rename(columns={'qtd_litros': 'litros', 'km': 'km'}, inplace=True)
-    consumo_filt['litros'] = consumo_filt['litros'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['km'] = consumo_filt['km'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['litros'] = pd.to_numeric(consumo_filt['litros'], errors='coerce')
-    consumo_filt['km'] = pd.to_numeric(consumo_filt['km'], errors='coerce')
-    consumo_filt.dropna(subset=['litros', 'km'], inplace=True)
+# Abas com indicadores e gráficos
+tabs = st.tabs(["Resumo Consumo", "Abastecimento", "Autonomia Real", "Gráficos", "Relatório PDF"])
 
+with tabs[0]:
     resumo_consumo, fig1 = plot_consumo_medio(consumo_filt)
-
     st.header("🚛 Consumo Médio por Veículo")
     st.dataframe(resumo_consumo.style.format({
         'km_min': '{:,.0f}',
@@ -190,6 +233,8 @@ if uploaded_file:
     }))
     st.plotly_chart(fig1, use_container_width=True)
 
+with tabs[1]:
+    resumo_ab, fig2 = plot_litros_total(abastecimentos)
     st.header("⛽ Total Litros Consumidos")
     st.dataframe(resumo_ab.style.format({
         'total_litros': '{:,.2f}',
@@ -198,16 +243,35 @@ if uploaded_file:
     }))
     st.plotly_chart(fig2, use_container_width=True)
 
-    if st.button("📄 Gerar Relatório PDF"):
+with tabs[2]:
+    autonomia_df, fig3 = plot_autonomia_real(consumo_filt, abastecimentos)
+    st.header("🔋 Autonomia Real (Km/L)")
+    st.dataframe(autonomia_df.style.format({
+        'km_min': '{:,.0f}',
+        'km_max': '{:,.0f}',
+        'litros_consumo': '{:,.2f}',
+        'litros_abastecidos': '{:,.2f}',
+        'km_rodados': '{:,.0f}',
+        'autonomia_real': '{:.2f}'
+    }))
+    st.plotly_chart(fig3, use_container_width=True)
+
+with tabs[3]:
+    st.header("📊 Gráficos Gerais")
+    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
+
+with tabs[4]:
+    st.header("📄 Gerar Relatório PDF")
+    if st.button("Gerar PDF com Indicadores e Gráficos"):
         fig1_bytes = save_fig_to_bytes(fig1)
         fig2_bytes = save_fig_to_bytes(fig2)
-        pdf_buffer = gerar_pdf(resumo_consumo, resumo_ab, fig1_bytes, fig2_bytes)
-
+        fig3_bytes = save_fig_to_bytes(fig3)
+        pdf_buffer = gerar_pdf(resumo_consumo, resumo_ab, autonomia_df, fig1_bytes, fig2_bytes, fig3_bytes)
         st.download_button(
             label="📥 Baixar Relatório PDF",
             data=pdf_buffer,
             file_name="relatorio_consumo_abastecimento.pdf",
             mime="application/pdf"
         )
-else:
-    st.info("Faça upload do arquivo Excel para começar.")
