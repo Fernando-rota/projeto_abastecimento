@@ -90,27 +90,27 @@ file = st.file_uploader("📂 Envie o arquivo Excel (.xlsx)", type=["xlsx"])
 if file:
     interno, externo, consumo = load_data(file)
 
-    # Para evitar erros, padroniza nomes das colunas minúsculas e strip
+    # Padronizar nomes colunas
     interno.columns = interno.columns.str.strip()
     externo.columns = externo.columns.str.strip()
     consumo.columns = consumo.columns.str.strip()
 
-    # Resumo Consumo Interno (soma litros por placa)
-    resumo_consumo = interno.groupby("Placa")["Litros"].sum().reset_index()
-    fig_consumo = px.bar(resumo_consumo, x="Placa", y="Litros",
+    # Resumo Consumo Interno
+    resumo_consumo = interno.groupby("Placa")["Quantidade de litros"].sum().reset_index()
+    fig_consumo = px.bar(resumo_consumo, x="Placa", y="Quantidade de litros",
                          title="Consumo Interno", text_auto=True)
 
-    # Resumo Abastecimento Externo (soma litros por placa)
-    resumo_abastecimento = externo.groupby("Placa")["Litros"].sum().reset_index()
-    fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Litros",
+    # Resumo Abastecimento Externo
+    resumo_abastecimento = externo.groupby("Placa")["Quantidade de litros"].sum().reset_index()
+    fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Quantidade de litros",
                               title="Abastecimento Externo", text_auto=True)
 
-    # Consumo médio real (usando aba 'consumo')
+    # Consumo médio real (aba 'consumo')
     consumo_medio_df = calcular_consumo_medio(consumo)
     fig_consumo_medio = px.bar(consumo_medio_df, x="PLACA", y="Consumo Médio (km/l)",
                               title="Consumo Médio Real (Menor/Maior KM)", text_auto=True)
 
-    # Exibir dados e gráficos
+    # Exibir no Streamlit
     st.subheader("📊 Consumo Interno")
     st.dataframe(resumo_consumo)
     st.plotly_chart(fig_consumo, use_container_width=True)
@@ -123,7 +123,7 @@ if file:
     st.dataframe(consumo_medio_df)
     st.plotly_chart(fig_consumo_medio, use_container_width=True)
 
-    # Criar e disponibilizar PPTX para download
+    # Criar PPTX para download
     pptx_file = criar_ppt(resumo_consumo, fig_consumo,
                          resumo_abastecimento, fig_abastecimento,
                          consumo_medio_df, fig_consumo_medio)
