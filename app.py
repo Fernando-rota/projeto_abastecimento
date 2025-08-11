@@ -13,26 +13,48 @@ def carregar_dados(arquivo):
     df_interno = pd.read_excel(arquivo, sheet_name='Abastecimento Interno')
     df_externo = pd.read_excel(arquivo, sheet_name='Abastecimento Externo')
 
-    # Limpeza e padronização Interno
     df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
     df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce').fillna(0)
     df_interno['Valor Unitario'] = df_interno['Valor Unitario'].apply(limpar_valor)
     df_interno['Valor Total'] = df_interno['Valor Total'].apply(limpar_valor)
     df_interno['Placa'] = df_interno['Placa'].astype(str).str.strip().str.upper()
     df_interno['Descrição Despesa'] = df_interno['Descrição Despesa'].astype(str).str.strip().str.upper()
+    df_interno['KM Atual'] = pd.to_numeric(df_interno['KM Atual'], errors='coerce')
 
-    # Limpeza e padronização Externo
     df_externo['Data'] = pd.to_datetime(df_externo['Data'], dayfirst=True, errors='coerce')
     df_externo['Quantidade de litros'] = df_externo['Quantidade de litros'].astype(str).str.replace(',', '.').astype(float)
     df_externo['Valor Unitario'] = df_externo['Valor Unitario'].apply(limpar_valor)
     df_externo['Valor Total'] = df_externo['Valor Total'].apply(limpar_valor)
     df_externo['Placa'] = df_externo['Placa'].astype(str).str.strip().str.upper()
     df_externo['Descrição Despesa'] = df_externo['Descrição Despesa'].astype(str).str.strip().str.upper()
+    df_externo['KM Atual'] = pd.to_numeric(df_externo['KM Atual'], errors='coerce')
 
     return df_interno, df_externo
 
+def calcula_consumo_medio(df_interno, df_externo):
+    # Concatenar para análise conjunta
+    df_combined = pd.concat([df_interno[['Placa', 'KM Atual', 'Quantidade de litros']],
+                             df_externo[['Placa', 'KM Atual', 'Quantidade de litros']]])
+
+    # Remover placas inválidas
+    placas_invalidas = ['-', 'CORREÇÃO']
+    df_combined = df_combined[~df_combined['Placa'].isin(placas_invalidas)]
+
+    # Agrupar por placa
+    consumo = df_combined.groupby('Placa').agg(
+        km_min=('KM Atual', 'min'),
+        km_max=('KM Atual', 'max'),
+        litros_total=('Quantidade de litros', 'sum')
+    ).reset_index()
+
+    # Calcular consumo médio (km/l)
+    consumo['Consumo Médio (km/l)'] = (consumo['km_max'] - consumo['km_min']) / consumo['litros_total']
+    consumo['Consumo Médio (km/l)'] = consumo['Consumo Médio (km/l)'].round(2)
+
+    return consumo
+
 def main():
-    st.title("Dashboard Abastecimento Interno x Externo")
+    st.title("Dashboard Abastecimento Interno x Externo com Consumo Médio")
 
     st.sidebar.header("Upload da planilha Excel")
     arquivo = st.sidebar.file_uploader("Envie a planilha com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=['xls', 'xlsx'])
@@ -70,7 +92,7 @@ def main():
             df_interno = df_interno[(df_interno['Data'] >= data_start) & (df_interno['Data'] <= data_end)]
             df_externo = df_externo[(df_externo['Data'] >= data_start) & (df_externo['Data'] <= data_end)]
 
-        # Indicadores
+        # Indicadores gerais
         st.subheader("Indicadores Gerais")
 
         litros_interno = df_interno['Quantidade de litros'].sum()
@@ -88,7 +110,16 @@ def main():
         col2.metric("Litros Externos", f"{litros_externo:.2f} L")
         col2.metric("Custo Médio Externo (R$/L)", f"R$ {custo_medio_externo:.2f}")
 
-        # Gráfico custo ao longo do tempo
+        # Consumo médio placa a placa
+        st.subheader("Consumo Médio por Placa (km/l)")
+        consumo = calcula_consumo_medio(df_interno, df_externo)
+
+        if placa_selecionada != 'Todas':
+            consumo = consumo[consumo['Placa'] == placa_selecionada]
+
+        st.dataframe(consumo)
+
+        # Gráficos custo e litros ao longo do tempo - mantidos do exemplo anterior
         st.subheader("Evolução do Custo Total")
 
         interno_plot = df_interno.groupby('Data')['Valor Total'].sum().reset_index()
@@ -107,7 +138,6 @@ def main():
         else:
             st.write("Sem dados para gráfico.")
 
-        # Gráfico litros ao longo do tempo
         st.subheader("Evolução da Quantidade de Litros")
 
         interno_litros = df_interno.groupby('Data')['Quantidade de litros'].sum().reset_index()
@@ -125,6 +155,7 @@ def main():
             st.plotly_chart(fig2, use_container_width=True)
         else:
             st.write("Sem dados para gráfico.")
+
     else:
         st.info("Faça upload da planilha com abas 'Abastecimento Interno' e 'Abastecimento Externo'.")
 
