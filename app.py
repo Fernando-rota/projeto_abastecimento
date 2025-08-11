@@ -17,7 +17,7 @@ def load_data(file):
     return interno, externo, consumo
 
 def calcular_consumo_medio(df):
-    df = df.rename(columns=lambda x: x.strip())  # tira espaços
+    df = df.rename(columns=lambda x: x.strip())  # remove espaços extras
     resultados = []
     for placa, grupo in df.groupby("PLACA"):
         grupo = grupo.dropna(subset=["KM", "QTD LITROS"])
@@ -43,8 +43,10 @@ def fig_to_image(fig):
         png_bytes = pio.to_image(fig, format="png", width=900, height=500, scale=2)
         return io.BytesIO(png_bytes)
     except RuntimeError as e:
-        st.error("Erro ao gerar imagem PNG do gráfico. Isso pode acontecer porque o Kaleido precisa do Google Chrome instalado para funcionar.\n"
-                 "Instale o Chrome no seu sistema para gerar os PPTX com gráficos.\n\nErro completo:\n" + str(e))
+        st.error(
+            "⚠️ Erro ao gerar imagem PNG do gráfico. O Kaleido precisa do Google Chrome instalado para funcionar.\n"
+            "Por favor, instale o Chrome para gerar PPTX com gráficos.\n\nErro:\n" + str(e)
+        )
         return None
 
 def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimento, consumo_medio_df, fig_consumo_medio):
@@ -58,8 +60,10 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
 
     # Slide 2 - Gráfico Consumo Interno
     if fig_consumo is not None:
-        slide2 = prs.slides.add_slide(prs.slide_layouts[5])
-        slide2.shapes.add_picture(fig_to_image(fig_consumo), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+        img = fig_to_image(fig_consumo)
+        if img is not None:
+            slide2 = prs.slides.add_slide(prs.slide_layouts[5])
+            slide2.shapes.add_picture(img, Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     # Slide 3 - Resumo Abastecimento Externo
     slide3 = prs.slides.add_slide(prs.slide_layouts[5])
@@ -69,8 +73,10 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
 
     # Slide 4 - Gráfico Abastecimento Externo
     if fig_abastecimento is not None:
-        slide4 = prs.slides.add_slide(prs.slide_layouts[5])
-        slide4.shapes.add_picture(fig_to_image(fig_abastecimento), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+        img = fig_to_image(fig_abastecimento)
+        if img is not None:
+            slide4 = prs.slides.add_slide(prs.slide_layouts[5])
+            slide4.shapes.add_picture(img, Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     # Slide 5 - Consumo Médio
     slide5 = prs.slides.add_slide(prs.slide_layouts[5])
@@ -80,8 +86,10 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
 
     # Slide 6 - Gráfico Consumo Médio
     if fig_consumo_medio is not None:
-        slide6 = prs.slides.add_slide(prs.slide_layouts[5])
-        slide6.shapes.add_picture(fig_to_image(fig_consumo_medio), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
+        img = fig_to_image(fig_consumo_medio)
+        if img is not None:
+            slide6 = prs.slides.add_slide(prs.slide_layouts[5])
+            slide6.shapes.add_picture(img, Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
     pptx_io = io.BytesIO()
     prs.save(pptx_io)
@@ -93,11 +101,12 @@ file = st.file_uploader("📂 Envie o arquivo Excel (.xlsx)", type=["xlsx"])
 if file:
     interno, externo, consumo = load_data(file)
 
+    # Limpar espaços nas colunas
     interno.columns = interno.columns.str.strip()
     externo.columns = externo.columns.str.strip()
     consumo.columns = consumo.columns.str.strip()
 
-    # Criar abas no Streamlit
+    # Criar abas para separar os relatórios
     tab1, tab2, tab3 = st.tabs(["Consumo Interno", "Abastecimento Externo", "Consumo Médio Real"])
 
     with tab1:
@@ -121,7 +130,6 @@ if file:
         st.dataframe(consumo_medio_df)
         st.plotly_chart(fig_consumo_medio, use_container_width=True)
 
-    # Criar PPTX para download (usar as figuras dos tabs)
     pptx_file = criar_ppt(
         resumo_consumo if 'resumo_consumo' in locals() else pd.DataFrame(),
         fig_consumo if 'fig_consumo' in locals() else None,
