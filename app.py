@@ -32,29 +32,57 @@ def carregar_dados(arquivo):
     return df_interno, df_externo
 
 def calcula_consumo_medio(df_interno, df_externo):
-    # Concatenar para análise conjunta
     df_combined = pd.concat([df_interno[['Placa', 'KM Atual', 'Quantidade de litros']],
                              df_externo[['Placa', 'KM Atual', 'Quantidade de litros']]])
 
-    # Remover placas inválidas
     placas_invalidas = ['-', 'CORREÇÃO']
     df_combined = df_combined[~df_combined['Placa'].isin(placas_invalidas)]
 
-    # Agrupar por placa
     consumo = df_combined.groupby('Placa').agg(
         km_min=('KM Atual', 'min'),
         km_max=('KM Atual', 'max'),
         litros_total=('Quantidade de litros', 'sum')
     ).reset_index()
 
-    # Calcular consumo médio (km/l)
     consumo['Consumo Médio (km/l)'] = (consumo['km_max'] - consumo['km_min']) / consumo['litros_total']
     consumo['Consumo Médio (km/l)'] = consumo['Consumo Médio (km/l)'].round(2)
 
+    # Ordenar do maior para o menor consumo médio
+    consumo = consumo.sort_values(by='Consumo Médio (km/l)', ascending=False).reset_index(drop=True)
+
     return consumo
 
+def indicadores_mensais(df_interno, df_externo):
+    # Criar coluna ano-mes
+    df_interno['Ano-Mes'] = df_interno['Data'].dt.to_period('M').astype(str)
+    df_externo['Ano-Mes'] = df_externo['Data'].dt.to_period('M').astype(str)
+
+    placas_invalidas = ['-', 'CORREÇÃO']
+    df_interno = df_interno[~df_interno['Placa'].isin(placas_invalidas)]
+    df_externo = df_externo[~df_externo['Placa'].isin(placas_invalidas)]
+
+    # Agrupamento litros e valor total por mês e origem
+    interno_agg = df_interno.groupby('Ano-Mes').agg(
+        litros_interno=('Quantidade de litros', 'sum'),
+        valor_interno=('Valor Total', 'sum')
+    ).reset_index()
+
+    externo_agg = df_externo.groupby('Ano-Mes').agg(
+        litros_externo=('Quantidade de litros', 'sum'),
+        valor_externo=('Valor Total', 'sum')
+    ).reset_index()
+
+    # Combinar
+    mensal = pd.merge(interno_agg, externo_agg, on='Ano-Mes', how='outer').fillna(0)
+
+    # Preço médio por mês (valor total / litros)
+    mensal['Preço Médio Interno (R$/L)'] = mensal.apply(lambda row: (row['valor_interno'] / row['litros_interno']) if row['litros_interno'] > 0 else 0, axis=1)
+    mensal['Preço Médio Externo (R$/L)'] = mensal.apply(lambda row: (row['valor_externo'] / row['litros_externo']) if row['litros_externo'] > 0 else 0, axis=1)
+
+    return mensal
+
 def main():
-    st.title("Dashboard Abastecimento Interno x Externo com Consumo Médio")
+    st.title("Dashboard Abastecimento Interno x Externo com Indicadores Mensais")
 
     st.sidebar.header("Upload da planilha Excel")
     arquivo = st.sidebar.file_uploader("Envie a planilha com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=['xls', 'xlsx'])
@@ -62,12 +90,10 @@ def main():
     if arquivo:
         df_interno, df_externo = carregar_dados(arquivo)
 
-        # Remover placas inválidas
         placas_invalidas = ['-', 'CORREÇÃO']
         df_interno = df_interno[~df_interno['Placa'].isin(placas_invalidas)]
         df_externo = df_externo[~df_externo['Placa'].isin(placas_invalidas)]
 
-        # Filtros
         placas = sorted(set(df_interno['Placa'].unique()) | set(df_externo['Placa'].unique()))
         combustiveis = sorted(set(df_interno['Descrição Despesa'].unique()) | set(df_externo['Descrição Despesa'].unique()))
 
@@ -78,7 +104,6 @@ def main():
         data_max = max(df_interno['Data'].max(), df_externo['Data'].max())
         periodo = st.sidebar.date_input("Filtrar por período", [data_min, data_max])
 
-        # Aplicar filtros
         if placa_selecionada != 'Todas':
             df_interno = df_interno[df_interno['Placa'] == placa_selecionada]
             df_externo = df_externo[df_externo['Placa'] == placa_selecionada]
@@ -92,9 +117,7 @@ def main():
             df_interno = df_interno[(df_interno['Data'] >= data_start) & (df_interno['Data'] <= data_end)]
             df_externo = df_externo[(df_externo['Data'] >= data_start) & (df_externo['Data'] <= data_end)]
 
-        # Indicadores gerais
         st.subheader("Indicadores Gerais")
-
         litros_interno = df_interno['Quantidade de litros'].sum()
         valor_interno = df_interno['Valor Total'].sum()
         custo_medio_interno = valor_interno / litros_interno if litros_interno > 0 else 0
@@ -110,51 +133,39 @@ def main():
         col2.metric("Litros Externos", f"{litros_externo:.2f} L")
         col2.metric("Custo Médio Externo (R$/L)", f"R$ {custo_medio_externo:.2f}")
 
-        # Consumo médio placa a placa
         st.subheader("Consumo Médio por Placa (km/l)")
         consumo = calcula_consumo_medio(df_interno, df_externo)
-
         if placa_selecionada != 'Todas':
             consumo = consumo[consumo['Placa'] == placa_selecionada]
-
         st.dataframe(consumo)
 
-        # Gráficos custo e litros ao longo do tempo - mantidos do exemplo anterior
-        st.subheader("Evolução do Custo Total")
+        # Indicadores mensais
+        st.subheader("Abastecimento Interno x Externo - Litros e Valores Mensais")
+        mensal = indicadores_mensais(df_interno, df_externo)
+        st.dataframe(mensal)
 
-        interno_plot = df_interno.groupby('Data')['Valor Total'].sum().reset_index()
-        interno_plot['Origem'] = 'Interno'
+        # Gráficos de litros mensais
+        fig_litros = px.bar(mensal.melt(id_vars='Ano-Mes', value_vars=['litros_interno', 'litros_externo'], var_name='Origem', value_name='Litros'),
+                           x='Ano-Mes', y='Litros', color='Origem',
+                           labels={'Ano-Mes': 'Mês', 'Litros': 'Litros', 'Origem': 'Origem'},
+                           title='Litros Abastecidos Mensalmente')
+        st.plotly_chart(fig_litros, use_container_width=True)
 
-        externo_plot = df_externo.groupby('Data')['Valor Total'].sum().reset_index()
-        externo_plot['Origem'] = 'Externo'
+        # Gráficos de valores mensais
+        fig_valor = px.bar(mensal.melt(id_vars='Ano-Mes', value_vars=['valor_interno', 'valor_externo'], var_name='Origem', value_name='Valor (R$)'),
+                           x='Ano-Mes', y='Valor (R$)', color='Origem',
+                           labels={'Ano-Mes': 'Mês', 'Valor (R$)': 'Valor (R$)', 'Origem': 'Origem'},
+                           title='Valor Total Abastecido Mensalmente')
+        st.plotly_chart(fig_valor, use_container_width=True)
 
-        df_custo = pd.concat([interno_plot, externo_plot]).sort_values('Data')
-
-        if not df_custo.empty:
-            fig1 = px.line(df_custo, x='Data', y='Valor Total', color='Origem',
-                           labels={'Valor Total': 'Valor Total (R$)', 'Data': 'Data', 'Origem': 'Origem'},
-                           title="Custo Total ao Longo do Tempo")
-            st.plotly_chart(fig1, use_container_width=True)
-        else:
-            st.write("Sem dados para gráfico.")
-
-        st.subheader("Evolução da Quantidade de Litros")
-
-        interno_litros = df_interno.groupby('Data')['Quantidade de litros'].sum().reset_index()
-        interno_litros['Origem'] = 'Interno'
-
-        externo_litros = df_externo.groupby('Data')['Quantidade de litros'].sum().reset_index()
-        externo_litros['Origem'] = 'Externo'
-
-        df_litros = pd.concat([interno_litros, externo_litros]).sort_values('Data')
-
-        if not df_litros.empty:
-            fig2 = px.line(df_litros, x='Data', y='Quantidade de litros', color='Origem',
-                           labels={'Quantidade de litros': 'Litros', 'Data': 'Data', 'Origem': 'Origem'},
-                           title="Litros Abastecidos ao Longo do Tempo")
-            st.plotly_chart(fig2, use_container_width=True)
-        else:
-            st.write("Sem dados para gráfico.")
+        # Gráficos de preço médio mensal
+        st.subheader("Preço Médio do Combustível por Mês (R$/L)")
+        fig_preco = px.line(mensal.melt(id_vars='Ano-Mes', value_vars=['Preço Médio Interno (R$/L)', 'Preço Médio Externo (R$/L)'],
+                                        var_name='Origem', value_name='Preço Médio (R$/L)'),
+                           x='Ano-Mes', y='Preço Médio (R$/L)', color='Origem',
+                           labels={'Ano-Mes': 'Mês', 'Preço Médio (R$/L)': 'Preço Médio (R$/L)', 'Origem': 'Origem'},
+                           title='Preço Médio Mensal do Combustível')
+        st.plotly_chart(fig_preco, use_container_width=True)
 
     else:
         st.info("Faça upload da planilha com abas 'Abastecimento Interno' e 'Abastecimento Externo'.")
