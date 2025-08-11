@@ -1,8 +1,5 @@
 streamlit
 pandas
-plotly
-python-pptx
-Pillow
-kaleido
-openpyxl
 matplotlib
+reportlab
+openpyxl
