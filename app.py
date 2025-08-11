@@ -2,26 +2,27 @@ import io
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.io as pio
 from pptx import Presentation
 from pptx.util import Inches
-import plotly.io as pio
 
 st.set_page_config(page_title="📊 BI Consumo + Export PPTX", layout="wide")
 st.title("📊 BI Completo: Consumo e Abastecimento + Exportação PPTX")
 
 @st.cache_data
-def load_data(file_path):
-    interno = pd.read_excel(file_path, sheet_name="interno")
-    externo = pd.read_excel(file_path, sheet_name="externo")
-    consumo = pd.read_excel(file_path, sheet_name="consumo")
+def load_data(file):
+    interno = pd.read_excel(file, sheet_name="interno")
+    externo = pd.read_excel(file, sheet_name="externo")
+    consumo = pd.read_excel(file, sheet_name="consumo")
     return interno, externo, consumo
 
 def calcular_consumo_medio(df):
     """
     Calcula o consumo médio (km/l) para cada placa,
-    usando o menor e maior KM registrados.
+    usando o menor e maior KM registrados na aba 'consumo'.
     """
     resultados = []
+    df = df.rename(columns=lambda x: x.strip())  # tira espaços nas colunas
     for placa, grupo in df.groupby("PLACA"):
         grupo = grupo.dropna(subset=["KM", "QTD LITROS"])
         if len(grupo) < 2:
@@ -42,7 +43,7 @@ def calcular_consumo_medio(df):
     return pd.DataFrame(resultados)
 
 def fig_to_image(fig):
-    """Converte gráfico Plotly para PNG"""
+    """Converte gráfico Plotly para PNG em bytes para o PPTX"""
     png_bytes = pio.to_image(fig, format="png", width=900, height=500, scale=2)
     return io.BytesIO(png_bytes)
 
@@ -84,25 +85,32 @@ def criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimen
     pptx_io.seek(0)
     return pptx_io
 
-file = st.file_uploader("📂 Envie o arquivo Excel", type=["xlsx"])
+file = st.file_uploader("📂 Envie o arquivo Excel (.xlsx)", type=["xlsx"])
 
 if file:
     interno, externo, consumo = load_data(file)
 
-    # Resumo Consumo Interno
-    resumo_consumo = interno.groupby("Placa")["Litros"].sum().reset_index()
-    fig_consumo = px.bar(resumo_consumo, x="Placa", y="Litros", title="Consumo Interno", text_auto=True)
+    # Para evitar erros, padroniza nomes das colunas minúsculas e strip
+    interno.columns = interno.columns.str.strip()
+    externo.columns = externo.columns.str.strip()
+    consumo.columns = consumo.columns.str.strip()
 
-    # Resumo Abastecimento Externo
+    # Resumo Consumo Interno (soma litros por placa)
+    resumo_consumo = interno.groupby("Placa")["Litros"].sum().reset_index()
+    fig_consumo = px.bar(resumo_consumo, x="Placa", y="Litros",
+                         title="Consumo Interno", text_auto=True)
+
+    # Resumo Abastecimento Externo (soma litros por placa)
     resumo_abastecimento = externo.groupby("Placa")["Litros"].sum().reset_index()
-    fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Litros", title="Abastecimento Externo", text_auto=True)
+    fig_abastecimento = px.bar(resumo_abastecimento, x="Placa", y="Litros",
+                              title="Abastecimento Externo", text_auto=True)
 
     # Consumo médio real (usando aba 'consumo')
     consumo_medio_df = calcular_consumo_medio(consumo)
     fig_consumo_medio = px.bar(consumo_medio_df, x="PLACA", y="Consumo Médio (km/l)",
-                                title="Consumo Médio Real (Menor/Maior KM)", text_auto=True)
+                              title="Consumo Médio Real (Menor/Maior KM)", text_auto=True)
 
-    # Exibição no Streamlit
+    # Exibir dados e gráficos
     st.subheader("📊 Consumo Interno")
     st.dataframe(resumo_consumo)
     st.plotly_chart(fig_consumo, use_container_width=True)
@@ -115,8 +123,10 @@ if file:
     st.dataframe(consumo_medio_df)
     st.plotly_chart(fig_consumo_medio, use_container_width=True)
 
-    # Criar PPTX para download
-    pptx_file = criar_ppt(resumo_consumo, fig_consumo, resumo_abastecimento, fig_abastecimento, consumo_medio_df, fig_consumo_medio)
+    # Criar e disponibilizar PPTX para download
+    pptx_file = criar_ppt(resumo_consumo, fig_consumo,
+                         resumo_abastecimento, fig_abastecimento,
+                         consumo_medio_df, fig_consumo_medio)
 
     st.download_button(
         label="📥 Baixar Relatório PPTX",
