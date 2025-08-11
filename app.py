@@ -10,11 +10,10 @@ def limpar_valor(valor):
     return float(valor)
 
 def carregar_dados(abastecimento_path):
-    # Usar os nomes das abas exatamente como você informou
-    df_interno = pd.read_excel(abastecimento_path, sheet_name='Abastecimento interno')
-    df_externo = pd.read_excel(abastecimento_path, sheet_name='Abastecimento externo')
+    df_interno = pd.read_excel(abastecimento_path, sheet_name='Abastecimento Interno')
+    df_externo = pd.read_excel(abastecimento_path, sheet_name='Abastecimento Externo')
     
-    # Limpeza interno
+    # Limpeza dados interno
     df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
     df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce').fillna(0)
     df_interno['Valor Unitario'] = df_interno['Valor Unitario'].apply(limpar_valor)
@@ -22,7 +21,7 @@ def carregar_dados(abastecimento_path):
     df_interno['Placa'] = df_interno['Placa'].astype(str).str.strip().str.upper()
     df_interno['Tipo Combustivel'] = df_interno['Tipo Combustivel'].astype(str).str.strip().str.upper()
     
-    # Limpeza externo
+    # Limpeza dados externo
     df_externo['Data'] = pd.to_datetime(df_externo['Data'], dayfirst=True, errors='coerce')
     df_externo['Quantidade de litros'] = df_externo['Quantidade de litros'].astype(str).str.replace(',', '.').astype(float)
     df_externo['Valor Unitario'] = df_externo['Valor Unitario'].apply(limpar_valor)
@@ -36,7 +35,7 @@ def main():
     st.title("Dashboard Abastecimento Interno x Externo")
     
     st.sidebar.header("Upload do arquivo Excel")
-    arquivo = st.sidebar.file_uploader("Faça upload da planilha Excel com as abas 'Abastecimento interno' e 'Abastecimento externo'", type=['xls', 'xlsx'])
+    arquivo = st.sidebar.file_uploader("Faça upload da planilha Excel com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=['xls', 'xlsx'])
     
     if arquivo:
         df_interno, df_externo = carregar_dados(arquivo)
@@ -47,17 +46,14 @@ def main():
         placa_selecionada = st.sidebar.selectbox("Filtrar por placa", ['Todas'] + placas)
         combustivel_selecionado = st.sidebar.selectbox("Filtrar por combustível", ['Todos'] + combustiveis)
         
-        # Filtra placas
         if placa_selecionada != 'Todas':
             df_interno = df_interno[df_interno['Placa'] == placa_selecionada]
             df_externo = df_externo[df_externo['Placa'] == placa_selecionada]
         
-        # Filtra combustível
         if combustivel_selecionado != 'Todos':
             df_interno = df_interno[df_interno['Tipo Combustivel'] == combustivel_selecionado]
             df_externo = df_externo[df_externo['Tipo Combustivel'] == combustivel_selecionado]
         
-        # Indicadores
         st.subheader("Indicadores Gerais")
         
         total_litros_interno = df_interno['Quantidade de litros'].sum()
@@ -75,7 +71,6 @@ def main():
         col2.metric("Total Litros Externo", f"{total_litros_externo:.2f} L")
         col2.metric("Custo Médio Externo (R$/L)", f"R$ {custo_medio_externo:.2f}")
         
-        # Gráfico evolução custo total ao longo do tempo
         st.subheader("Evolução do Custo Total (Interno x Externo)")
         
         df_interno_plot = df_interno.groupby('Data').agg({'Valor Total': 'sum'}).reset_index()
@@ -84,8 +79,7 @@ def main():
         df_externo_plot = df_externo.groupby('Data').agg({'Valor Total': 'sum'}).reset_index()
         df_externo_plot['Origem'] = 'Externo'
         
-        df_custos = pd.concat([df_interno_plot, df_externo_plot])
-        df_custos = df_custos.sort_values('Data')
+        df_custos = pd.concat([df_interno_plot, df_externo_plot]).sort_values('Data')
         
         if not df_custos.empty:
             fig = px.line(df_custos, x='Data', y='Valor Total', color='Origem',
@@ -95,7 +89,6 @@ def main():
         else:
             st.write("Sem dados para gráfico.")
         
-        # Gráfico litros abastecidos por data
         st.subheader("Evolução da Quantidade de Litros Abastecidos (Interno x Externo)")
         
         df_interno_litros = df_interno.groupby('Data').agg({'Quantidade de litros': 'sum'}).reset_index()
@@ -104,8 +97,7 @@ def main():
         df_externo_litros = df_externo.groupby('Data').agg({'Quantidade de litros': 'sum'}).reset_index()
         df_externo_litros['Origem'] = 'Externo'
         
-        df_litros = pd.concat([df_interno_litros, df_externo_litros])
-        df_litros = df_litros.sort_values('Data')
+        df_litros = pd.concat([df_interno_litros, df_externo_litros]).sort_values('Data')
         
         if not df_litros.empty:
             fig2 = px.line(df_litros, x='Data', y='Quantidade de litros', color='Origem',
@@ -116,7 +108,7 @@ def main():
             st.write("Sem dados para gráfico.")
         
     else:
-        st.info("Faça upload da planilha Excel com abas 'Abastecimento interno' e 'Abastecimento externo' para visualizar os dados.")
+        st.info("Faça upload da planilha Excel com abas 'Abastecimento Interno' e 'Abastecimento Externo' para visualizar os dados.")
 
 if __name__ == "__main__":
     main()
