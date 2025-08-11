@@ -56,26 +56,26 @@ def criar_ppt(resumo_consumo_df, fig_consumo, resumo_consumo_ab_df, fig_consumo_
     tf = txBox.text_frame
     tf.text = "Dashboard Consumo e Abastecimento - Resumo"
 
-    # Slide 2: gráfico consumo médio
+    # Slide 2: gráfico consumo médio (aba consumo)
     slide2 = prs.slides.add_slide(blank_slide_layout)
     slide2.shapes.add_picture(fig_to_image(fig_consumo), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
-    # Slide 3: tabela resumo consumo médio
+    # Slide 3: tabela resumo consumo médio (aba consumo)
     slide3 = prs.slides.add_slide(blank_slide_layout)
-    text = "Resumo Consumo Médio por Veículo\n\n"
+    text = "Resumo Consumo Médio (Base: Aba Consumo)\n\n"
     for _, row in resumo_consumo_df.iterrows():
         text += f"Placa: {row['placa']} | Km rodados: {row['km_rodados']:.0f} | Litros: {row['litros_totais']:.2f} | Consumo Médio: {row['consumo_medio_km_por_litro']:.2f}\n"
     txBox3 = slide3.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(6))
     tf3 = txBox3.text_frame
     tf3.text = text
 
-    # Slide 4: gráfico litros consumidos (aba consumo)
+    # Slide 4: gráfico litros consumidos (aba interno + externo)
     slide4 = prs.slides.add_slide(blank_slide_layout)
     slide4.shapes.add_picture(fig_to_image(fig_consumo_ab), Inches(0.5), Inches(0.5), Inches(9), Inches(5))
 
-    # Slide 5: tabela resumo aba consumo
+    # Slide 5: tabela resumo aba interno + externo
     slide5 = prs.slides.add_slide(blank_slide_layout)
-    text2 = "Indicadores Aba Consumo\n\n"
+    text2 = "Indicadores Abastecimento Interno + Externo\n\n"
     for _, row in resumo_consumo_ab_df.iterrows():
         text2 += f"Placa: {row['placa']} | Total Litros: {row['total_litros_consumo']:.2f} | Média Km: {row['media_km_consumo']:.0f} | Registros: {row['registros']}\n"
     txBox5 = slide5.shapes.add_textbox(Inches(0.5), Inches(0.5), Inches(9), Inches(6))
@@ -92,6 +92,7 @@ if uploaded_file:
     interno, externo, consumo = load_data(uploaded_file)
 
     st.sidebar.header("Filtros Globais")
+
     placas_unicas = sorted(set(interno['placa'].dropna().unique()) |
                           set(externo['placa'].dropna().unique()) |
                           set(consumo['placa'].dropna().unique()))
@@ -108,6 +109,7 @@ if uploaded_file:
 
     data_start, data_end = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
 
+    # Filtro nas abas interno e externo
     interno_filt = interno[
         (interno['placa'].isin(placas_selected)) &
         (interno['data'] >= data_start) & (interno['data'] <= data_end)
@@ -116,24 +118,42 @@ if uploaded_file:
         (externo['placa'].isin(placas_selected)) &
         (externo['data'] >= data_start) & (externo['data'] <= data_end)
     ]
-    consumo_filt = consumo[
-        (consumo['placa'].isin(placas_selected)) &
-        (consumo['data'] >= data_start) & (consumo['data'] <= data_end)
-    ]
 
     if 'tipo' in interno_filt.columns:
         interno_filt = interno_filt[interno_filt['tipo'].isin(combust_selected)]
     if 'tipo_combustivel' in externo_filt.columns:
         externo_filt = externo_filt[externo_filt['tipo_combustivel'].isin(combust_selected)]
 
+    # Processar abas interno e externo para indicadores de litros e km
     interno_proc = preprocess_abastecimentos(interno_filt, 'quantidade_de_litros', 'km_atual', 'tipo')
     externo_proc = preprocess_abastecimentos(externo_filt, 'quantidade_de_litros', 'km_atual', 'tipo_combustivel')
 
     abastecimentos = pd.concat([interno_proc, externo_proc], ignore_index=True)
 
-    resumo_consumo = abastecimentos.groupby('placa').agg(
-        km_min=('km', 'min'),
-        km_max=('km', 'max'),
+    resumo_consumo_ab = abastecimentos.groupby('placa').agg(
+        total_litros_consumo=('litros', 'sum'),
+        media_km_consumo=('km', 'mean'),
+        registros=('data', 'count')
+    ).reset_index()
+
+    # Filtro e processamento da aba consumo para cálculo do consumo médio real
+    consumo_filt = consumo[
+        (consumo['placa'].isin(placas_selected)) &
+        (consumo['data'] >= data_start) & (consumo['data'] <= data_end)
+    ]
+
+    consumo_filt.rename(columns={'qtd_litros': 'litros', 'km': 'km_consumo'}, inplace=True)
+
+    consumo_filt['litros'] = consumo_filt['litros'].astype(str).str.replace(',', '.', regex=False)
+    consumo_filt['km_consumo'] = consumo_filt['km_consumo'].astype(str).str.replace(',', '.', regex=False)
+    consumo_filt['litros'] = pd.to_numeric(consumo_filt['litros'], errors='coerce')
+    consumo_filt['km_consumo'] = pd.to_numeric(consumo_filt['km_consumo'], errors='coerce')
+    consumo_filt.dropna(subset=['litros', 'km_consumo'], inplace=True)
+
+    # Para o consumo médio: usamos km min e km max da aba consumo e soma dos litros da mesma aba (reflete consumo real)
+    resumo_consumo = consumo_filt.groupby('placa').agg(
+        km_min=('km_consumo', 'min'),
+        km_max=('km_consumo', 'max'),
         litros_totais=('litros', 'sum')
     ).reset_index()
     resumo_consumo['km_rodados'] = resumo_consumo['km_max'] - resumo_consumo['km_min']
@@ -141,7 +161,8 @@ if uploaded_file:
         lambda r: r['km_rodados'] / r['litros_totais'] if r['litros_totais'] > 0 else None, axis=1)
     resumo_consumo = resumo_consumo.sort_values('consumo_medio_km_por_litro', ascending=False)
 
-    st.header("🚛 Consumo Médio por Veículo (Interno + Externo)")
+    # Exibir indicadores consumo médio (aba consumo)
+    st.header("🚛 Consumo Médio por Veículo (Base: Aba Consumo)")
     st.dataframe(resumo_consumo.style.format({
         'km_min': '{:,.0f}',
         'km_max': '{:,.0f}',
@@ -155,20 +176,8 @@ if uploaded_file:
                   title='Consumo Médio (Km por Litro) por Veículo')
     st.plotly_chart(fig1, use_container_width=True)
 
-    consumo_filt.rename(columns={'qtd_litros': 'litros', 'km': 'km_consumo'}, inplace=True)
-    consumo_filt['litros'] = consumo_filt['litros'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['km_consumo'] = consumo_filt['km_consumo'].astype(str).str.replace(',', '.', regex=False)
-    consumo_filt['litros'] = pd.to_numeric(consumo_filt['litros'], errors='coerce')
-    consumo_filt['km_consumo'] = pd.to_numeric(consumo_filt['km_consumo'], errors='coerce')
-    consumo_filt.dropna(subset=['litros', 'km_consumo'], inplace=True)
-
-    resumo_consumo_ab = consumo_filt.groupby('placa').agg(
-        total_litros_consumo=('litros', 'sum'),
-        media_km_consumo=('km_consumo', 'mean'),
-        registros=('data', 'count')
-    ).reset_index()
-
-    st.header("⛽ Indicadores da aba Consumo")
+    # Exibir indicadores interno + externo (litros e km médios)
+    st.header("⛽ Indicadores Abastecimento Interno + Externo")
     st.dataframe(resumo_consumo_ab.style.format({
         'total_litros_consumo': '{:,.2f}',
         'media_km_consumo': '{:,.0f}',
@@ -177,10 +186,10 @@ if uploaded_file:
 
     fig2 = px.bar(resumo_consumo_ab, x='placa', y='total_litros_consumo',
                   labels={'total_litros_consumo': 'Total Litros', 'placa': 'Placa'},
-                  title='Total de Litros Consumidos por Veículo (Aba Consumo)')
+                  title='Total de Litros Consumidos por Veículo (Aba Interno + Externo)')
     st.plotly_chart(fig2, use_container_width=True)
 
-    # Botão de exportação PPTX
+    # Botão de exportação PPTX com gráficos e dados atuais
     pptx_file = criar_ppt(resumo_consumo, fig1, resumo_consumo_ab, fig2)
     st.download_button(
         label="📥 Exportar Apresentação PowerPoint",
