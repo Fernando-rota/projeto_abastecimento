@@ -93,7 +93,7 @@ def main():
 
     with tab2:
         st.header("🚙 Autonomia por Veículo")
-        st.dataframe(autonomia_df.style.format({"Autonomia (km/L)": "{:.3f}"}).hide_index())
+        st.write(autonomia_df.style.format({"Autonomia (km/L)": "{:.3f}"}).hide_index())
 
     with tab3:
         st.header("📈 Litros Mensais por Origem")
