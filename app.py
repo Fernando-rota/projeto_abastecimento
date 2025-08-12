@@ -7,23 +7,26 @@ st.title("📊 BI Abastecimento - Interno e Externo")
 
 @st.cache_data
 def load_data(file_path):
-    interno = pd.read_excel(file_path, sheet_name='interno')
-    externo = pd.read_excel(file_path, sheet_name='externo')
+    # Carrega as abas exatamente com o nome que você indicou
+    interno = pd.read_excel(file_path, sheet_name='Abastecimento Interno')
+    externo = pd.read_excel(file_path, sheet_name='Abastecimento Externo')
 
-    # Padronizar nomes (minusculo, sem espaços, com _)
-    interno.columns = interno.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('ú', 'u')
-    externo.columns = externo.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('ú', 'u')
+    # Padroniza os nomes das colunas para facilitar o uso (minúsculo, underline)
+    interno.columns = interno.columns.str.strip().str.lower().str.replace(' ', '_')
+    externo.columns = externo.columns.str.strip().str.lower().str.replace(' ', '_')
 
+    # Converte as colunas de data para datetime
     interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
     externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
 
+    # Remove linhas com data inválida
     interno.dropna(subset=['data'], inplace=True)
     externo.dropna(subset=['data'], inplace=True)
 
     return interno, externo
 
 def preprocess_abastecimentos(df, litros_col, km_col, combust_col=None, combust_default=None):
-    # Renomear colunas importantes para padrão interno
+    # Renomeia as colunas para uso padrão
     rename_map = {
         litros_col: 'litros',
         km_col: 'km',
@@ -32,18 +35,23 @@ def preprocess_abastecimentos(df, litros_col, km_col, combust_col=None, combust_
         rename_map[combust_col] = 'combustivel'
     df = df.rename(columns=rename_map)
 
-    df['km'] = df['km'].astype(str).str.replace(',', '.', regex=False)
+    # Ajusta vírgulas e converte para numérico
     df['litros'] = df['litros'].astype(str).str.replace(',', '.', regex=False)
-    df['km'] = pd.to_numeric(df['km'], errors='coerce')
+    df['km'] = df['km'].astype(str).str.replace(',', '.', regex=False)
     df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
+    df['km'] = pd.to_numeric(df['km'], errors='coerce')
 
+    # Se combustivel não existir e combust_default for dado, cria a coluna com valor padrão
     if combust_col not in df.columns and combust_default:
         df['combustivel'] = combust_default
 
-    df = df.dropna(subset=['km', 'litros', 'placa'])
+    # Remove linhas com dados faltantes essenciais
+    df = df.dropna(subset=['placa', 'litros', 'km'])
+
+    # Retorna só colunas que vamos usar
     return df[['data', 'placa', 'combustivel', 'litros', 'km']]
 
-uploaded_file = st.file_uploader("📁 Carregue sua planilha Excel com abas: interno e externo", type=['xlsx'])
+uploaded_file = st.file_uploader("📁 Carregue sua planilha Excel com abas: Abastecimento Interno e Abastecimento Externo", type=['xlsx'])
 if uploaded_file:
     interno, externo = load_data(uploaded_file)
 
@@ -52,7 +60,7 @@ if uploaded_file:
     placas_unicas = sorted(set(interno['placa'].dropna().unique()) | set(externo['placa'].dropna().unique()))
     placas_selected = st.sidebar.multiselect("Placas", placas_unicas, default=placas_unicas)
 
-    # Combustível: no interno temos coluna 'tipo', no externo usaremos 'descrição_despesa' como tipo combustível
+    # Combustível: interno usa 'tipo', externo usa 'descrição_despesa'
     combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
     combust_externo = externo['descrição_despesa'].dropna().unique() if 'descrição_despesa' in externo.columns else []
     combust_unificados = sorted(set(combust_interno) | set(combust_externo))
