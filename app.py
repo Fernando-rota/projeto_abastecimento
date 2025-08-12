@@ -10,8 +10,9 @@ def load_data(file_path):
     interno = pd.read_excel(file_path, sheet_name='interno')
     externo = pd.read_excel(file_path, sheet_name='externo')
 
-    for df in [interno, externo]:
-        df.rename(columns=lambda x: x.strip().lower().replace(' ', '_'), inplace=True)
+    # Padronizar nomes (minusculo, sem espaços, com _)
+    interno.columns = interno.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('ú', 'u')
+    externo.columns = externo.columns.str.strip().str.lower().str.replace(' ', '_').str.replace('ú', 'u')
 
     interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
     externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
@@ -21,16 +22,24 @@ def load_data(file_path):
 
     return interno, externo
 
-def preprocess_abastecimentos(df, litros_col, km_col, combust_col):
-    df = df.rename(columns={
+def preprocess_abastecimentos(df, litros_col, km_col, combust_col=None, combust_default=None):
+    # Renomear colunas importantes para padrão interno
+    rename_map = {
         litros_col: 'litros',
         km_col: 'km',
-        combust_col: 'combustivel'
-    })
+    }
+    if combust_col and combust_col in df.columns:
+        rename_map[combust_col] = 'combustivel'
+    df = df.rename(columns=rename_map)
+
     df['km'] = df['km'].astype(str).str.replace(',', '.', regex=False)
     df['litros'] = df['litros'].astype(str).str.replace(',', '.', regex=False)
     df['km'] = pd.to_numeric(df['km'], errors='coerce')
     df['litros'] = pd.to_numeric(df['litros'], errors='coerce')
+
+    if combust_col not in df.columns and combust_default:
+        df['combustivel'] = combust_default
+
     df = df.dropna(subset=['km', 'litros', 'placa'])
     return df[['data', 'placa', 'combustivel', 'litros', 'km']]
 
@@ -43,8 +52,9 @@ if uploaded_file:
     placas_unicas = sorted(set(interno['placa'].dropna().unique()) | set(externo['placa'].dropna().unique()))
     placas_selected = st.sidebar.multiselect("Placas", placas_unicas, default=placas_unicas)
 
+    # Combustível: no interno temos coluna 'tipo', no externo usaremos 'descrição_despesa' como tipo combustível
     combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
-    combust_externo = externo['tipo_combustivel'].dropna().unique() if 'tipo_combustivel' in externo.columns else []
+    combust_externo = externo['descrição_despesa'].dropna().unique() if 'descrição_despesa' in externo.columns else []
     combust_unificados = sorted(set(combust_interno) | set(combust_externo))
     combust_selected = st.sidebar.multiselect("Tipo Combustível", combust_unificados, default=combust_unificados)
 
@@ -65,11 +75,11 @@ if uploaded_file:
 
     if 'tipo' in interno_filt.columns:
         interno_filt = interno_filt[interno_filt['tipo'].isin(combust_selected)]
-    if 'tipo_combustivel' in externo_filt.columns:
-        externo_filt = externo_filt[externo_filt['tipo_combustivel'].isin(combust_selected)]
+    if 'descrição_despesa' in externo_filt.columns:
+        externo_filt = externo_filt[externo_filt['descrição_despesa'].isin(combust_selected)]
 
-    interno_proc = preprocess_abastecimentos(interno_filt, 'quantidade_de_litros', 'km_atual', 'tipo')
-    externo_proc = preprocess_abastecimentos(externo_filt, 'quantidade_de_litros', 'km_atual', 'tipo_combustivel')
+    interno_proc = preprocess_abastecimentos(interno_filt, 'quantidade_de_litros', 'km_atual', combust_col='tipo')
+    externo_proc = preprocess_abastecimentos(externo_filt, 'quantidade_de_litros', 'km_atual', combust_col='descrição_despesa')
 
     abastecimentos = pd.concat([interno_proc, externo_proc], ignore_index=True)
 
