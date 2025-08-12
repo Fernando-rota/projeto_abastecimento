@@ -1,147 +1,163 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-def limpar_valor(valor):
-    if pd.isna(valor):
-        return None
-    if isinstance(valor, str):
-        return float(valor.replace("R$", "").replace(".", "").replace(",", ".").strip())
-    return float(valor)
+st.set_page_config(page_title="Dashboard Abastecimento Frota", layout="wide")
 
-def carregar_dados(uploaded_file):
-    df_interno = pd.read_excel(uploaded_file, sheet_name="Abastecimento Interno")
-    df_externo = pd.read_excel(uploaded_file, sheet_name="Abastecimento Externo")
+st.title("Dashboard de Abastecimento de Veículos")
 
-    # Parse datas
-    df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
-    df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
+# Upload dos arquivos Excel
+st.sidebar.header("Carregar Planilhas")
+arquivo_interno = st.sidebar.file_uploader("Upload Abastecimento Interno (Excel)", type=["xlsx"])
+arquivo_externo = st.sidebar.file_uploader("Upload Abastecimento Externo (Excel)", type=["xlsx"])
 
-    # Remove placas inválidas
-    placas_invalidas = ["-", "correção"]
-    df_interno = df_interno[~df_interno["Placa"].isin(placas_invalidas)]
-    df_externo = df_externo[~df_externo["Placa"].isin(placas_invalidas)]
-
-    # Converte colunas para numérico, limpa valores monetários
-    df_interno["Quantidade de litros"] = pd.to_numeric(df_interno["Quantidade de litros"], errors="coerce").fillna(0)
-    df_interno["Valor Unitario"] = df_interno["Valor Unitario"].apply(limpar_valor)
-    df_interno["Valor Total"] = df_interno["Valor Total"].apply(limpar_valor)
-    df_interno["KM Atual"] = pd.to_numeric(df_interno["KM Atual"], errors="coerce")
-
-    df_externo["Quantidade de litros"] = pd.to_numeric(df_externo["Quantidade de litros"], errors="coerce").fillna(0)
-    df_externo["Valor Unitario"] = df_externo["Valor Unitario"].apply(limpar_valor)
-    df_externo["Valor Total"] = df_externo["Valor Total"].apply(limpar_valor)
-    df_externo["KM Atual"] = pd.to_numeric(df_externo["KM Atual"], errors="coerce")
-
-    # Padroniza texto para filtro de combustível
-    df_interno["Descrição Despesa"] = df_interno["Descrição Despesa"].astype(str).str.upper().str.strip()
-    df_externo["Descrição Despesa"] = df_externo["Descrição Despesa"].astype(str).str.upper().str.strip()
-
-    # Padroniza placa
-    df_interno["Placa"] = df_interno["Placa"].astype(str).str.upper().str.strip()
-    df_externo["Placa"] = df_externo["Placa"].astype(str).str.upper().str.strip()
-
+@st.cache_data
+def carregar_planilhas(arquivo_int, arquivo_ext):
+    # Carregar planilha interna
+    df_interno = pd.read_excel(arquivo_int) if arquivo_int else pd.DataFrame()
+    # Carregar planilha externa
+    df_externo = pd.read_excel(arquivo_ext) if arquivo_ext else pd.DataFrame()
     return df_interno, df_externo
 
-def filtrar_dados(df_interno, df_externo, placas_selecionadas, combustiveis_selecionados, meses_selecionados):
-    if placas_selecionadas:
-        df_interno = df_interno[df_interno["Placa"].isin(placas_selecionadas)]
-        df_externo = df_externo[df_externo["Placa"].isin(placas_selecionadas)]
+if arquivo_interno and arquivo_externo:
+    df_int, df_ext = carregar_planilhas(arquivo_interno, arquivo_externo)
+    
+    st.subheader("Dados Brutos - Interno")
+    st.dataframe(df_int.head(10))
+    
+    st.subheader("Dados Brutos - Externo")
+    st.dataframe(df_ext.head(10))
+    
+    ## Pré-processamento
+    
+    # Limpeza e padronização das colunas para interno
+    df_int = df_int.rename(columns=lambda x: x.strip() if isinstance(x, str) else x)
+    # Filtra apenas os registros relevantes (excluir linhas vazias ou placa nula)
+    df_int = df_int[df_int['Placa'].notna()]
+    # Transformar data em datetime
+    df_int['Data'] = pd.to_datetime(df_int['Data'], errors='coerce')
+    df_int = df_int.dropna(subset=['Data'])
+    # Remover linhas com litros <= 0 (se houver)
+    df_int = df_int[df_int['Quantidade de litros'] > 0]
+    # Normalizar coluna 'Tipo' para maiúsculas e tirar espaços
+    df_int['Tipo'] = df_int['Tipo'].str.strip().str.upper()
+    
+    # Limpeza e padronização das colunas para externo
+    df_ext = df_ext.rename(columns=lambda x: x.strip() if isinstance(x, str) else x)
+    df_ext = df_ext[df_ext['Placa'].notna()]
+    df_ext['Data'] = pd.to_datetime(df_ext['Data'], errors='coerce')
+    df_ext = df_ext.dropna(subset=['Data'])
+    # Limpar colunas numéricas que podem estar como string (ex: "R$ 6,09")
+    # Remove R$, espaços e substitui vírgula por ponto
+    def limpar_monetario(valor):
+        if pd.isna(valor):
+            return np.nan
+        if isinstance(valor, (int, float)):
+            return valor
+        valor = str(valor).replace('R$', '').replace(' ', '').replace('.', '').replace(',', '.')
+        try:
+            return float(valor)
+        except:
+            return np.nan
 
-    if combustiveis_selecionados:
-        df_interno = df_interno[df_interno["Descrição Despesa"].isin(combustiveis_selecionados)]
-        df_externo = df_externo[df_externo["Descrição Despesa"].isin(combustiveis_selecionados)]
+    df_ext['Valor Unitario'] = df_ext['Valor Unitario'].apply(limpar_monetario)
+    df_ext['Valor Total'] = df_ext['Valor Total'].apply(limpar_monetario)
+    df_ext['Quantidade de litros'] = pd.to_numeric(df_ext['Quantidade de litros'], errors='coerce')
 
-    if meses_selecionados:
-        df_interno = df_interno[df_interno["Data"].dt.month.isin(meses_selecionados)]
-        df_externo = df_externo[df_externo["Data"].dt.month.isin(meses_selecionados)]
+    # Filtra litros > 0
+    df_ext = df_ext[df_ext['Quantidade de litros'] > 0]
 
-    return df_interno, df_externo
-
-def calcular_consumo_medio(df_interno, df_externo):
-    df_km = pd.concat([df_interno[["Placa", "KM Atual"]], df_externo[["Placa", "KM Atual"]]])
-    consumo = df_km.groupby('Placa').agg(KM_max=('KM Atual','max'), KM_min=('KM Atual','min'))
-    consumo['KM Rodado'] = consumo['KM_max'] - consumo['KM_min']
-
-    litros = pd.concat([
-        df_interno.groupby('Placa')['Quantidade de litros'].sum(),
-        df_externo.groupby('Placa')['Quantidade de litros'].sum()
-    ], axis=1).fillna(0)
-
-    litros['Total Litros'] = litros.sum(axis=1)
-
-    consumo = consumo.join(litros['Total Litros'])
-    consumo['Autonomia (KM/L)'] = consumo['KM Rodado'] / consumo['Total Litros'].replace(0, pd.NA)
-    consumo = consumo.sort_values('KM Rodado', ascending=False).reset_index()
-    return consumo
-
-def indicadores_mensais(df_interno, df_externo):
-    df_interno['AnoMes'] = df_interno['Data'].dt.to_period('M')
-    df_externo['AnoMes'] = df_externo['Data'].dt.to_period('M')
-
-    interno_agg = df_interno.groupby(['AnoMes', 'Descrição Despesa']).agg({
-        'Quantidade de litros':'sum',
-        'Valor Total':'sum'
-    }).reset_index()
-    externo_agg = df_externo.groupby(['AnoMes', 'Descrição Despesa']).agg({
-        'Quantidade de litros':'sum',
-        'Valor Total':'sum'
-    }).reset_index()
-
-    return interno_agg, externo_agg
-
-def main():
-    st.title("📊 Dashboard de Abastecimento")
-
-    arquivo = st.file_uploader("Faça upload da planilha Excel com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=["xls", "xlsx"])
-
-    if arquivo:
-        df_interno, df_externo = carregar_dados(arquivo)
-
-        # Filtros
-        placas = sorted(set(df_interno["Placa"].unique()) | set(df_externo["Placa"].unique()))
-        combustiveis = sorted(set(df_interno["Descrição Despesa"].unique()) | set(df_externo["Descrição Despesa"].unique()))
-        meses = sorted(set(df_interno["Data"].dt.month.dropna().astype(int).unique()) | set(df_externo["Data"].dt.month.dropna().astype(int).unique()))
-
-        placas_selecionadas = st.multiselect("Selecione as placas", placas, default=placas)
-        combustiveis_selecionados = st.multiselect("Selecione os combustíveis", combustiveis, default=combustiveis)
-        meses_selecionados = st.multiselect("Selecione os meses (numérico)", meses, default=meses)
-
-        df_interno_filtrado, df_externo_filtrado = filtrar_dados(df_interno, df_externo, placas_selecionadas, combustiveis_selecionados, meses_selecionados)
-
-        aba1, aba2 = st.tabs(["Consumo Médio por Placa", "Indicadores Mensais"])
-
-        with aba1:
-            consumo = calcular_consumo_medio(df_interno_filtrado, df_externo_filtrado)
-            st.subheader("Consumo Médio e Autonomia por Veículo")
-            st.dataframe(consumo.style.format({
-                "KM Rodado": "{:,.0f}",
-                "Total Litros": "{:,.2f}",
-                "Autonomia (KM/L)": "{:,.2f}"
-            }), use_container_width=True)
-
-        with aba2:
-            interno_agg, externo_agg = indicadores_mensais(df_interno_filtrado, df_externo_filtrado)
-            st.subheader("Litros Abastecidos Mensalmente - Interno")
-            st.dataframe(interno_agg, use_container_width=True)
-
-            st.subheader("Litros Abastecidos Mensalmente - Externo")
-            st.dataframe(externo_agg, use_container_width=True)
-
-            # Gráfico Litros
-            litros_agg = pd.concat([
-                interno_agg.assign(Tipo='Interno'),
-                externo_agg.assign(Tipo='Externo')
-            ])
-            fig_litros = px.bar(litros_agg, x='AnoMes', y='Quantidade de litros', color='Tipo', barmode='group', title="Litros Abastecidos Mensalmente")
-            st.plotly_chart(fig_litros, use_container_width=True)
-
-            # Gráfico Custos
-            fig_custos = px.bar(litros_agg, x='AnoMes', y='Valor Total', color='Tipo', barmode='group', title="Custos Mensais de Abastecimento")
-            st.plotly_chart(fig_custos, use_container_width=True)
-
-    else:
-        st.info("Faça upload da planilha para iniciar a análise.")
-
-if __name__ == "__main__":
-    main()
+    # Calcular preço médio por litro interno (somente entradas)
+    df_int_entrada = df_int[df_int['Tipo'] == 'ENTRADA']  # Entradas no tanque
+    preco_medio_interno = np.nan
+    if not df_int_entrada.empty:
+        # Somar valor total interno (se disponível) / litros para achar preço médio
+        # Não temos valor unitário no interno? Se não, podemos deixar NaN.
+        # Como não há valor unitário na tabela interna, vamos deixar NaN ou ignorar.
+        preco_medio_interno = np.nan
+    
+    # Calcular preço médio por litro externo
+    preco_medio_externo = df_ext['Valor Unitario'].mean()
+    
+    # Total litros abastecidos por placa (interno e externo)
+    litros_interno_por_placa = df_int.groupby('Placa')['Quantidade de litros'].sum().sort_values(ascending=False)
+    litros_externo_por_placa = df_ext.groupby('Placa')['Quantidade de litros'].sum().sort_values(ascending=False)
+    
+    # Total gasto por placa externo
+    gasto_externo_por_placa = df_ext.groupby('Placa')['Valor Total'].sum().sort_values(ascending=False)
+    
+    # Consumo médio: calcular km/litro baseado no km atual e litros abastecidos.
+    # Isso é complexo pois precisa do histórico de km e litros. Vamos tentar fazer para externo:
+    df_ext = df_ext.sort_values(['Placa', 'Data'])
+    df_ext['KM Atual'] = pd.to_numeric(df_ext['KM Atual'], errors='coerce')
+    df_ext['Litros'] = df_ext['Quantidade de litros']
+    
+    # Cálculo simplificado: diferença de KM entre abastecimentos dividido pela quantidade de litros do abastecimento atual
+    df_ext['KM Anterior'] = df_ext.groupby('Placa')['KM Atual'].shift(1)
+    df_ext['KM Rodados'] = df_ext['KM Atual'] - df_ext['KM Anterior']
+    df_ext['Consumo (km/l)'] = df_ext['KM Rodados'] / df_ext['Litros']
+    df_ext = df_ext[df_ext['Consumo (km/l)'] > 0]  # remover valores inválidos
+    
+    consumo_medio_por_placa = df_ext.groupby('Placa')['Consumo (km/l)'].mean().sort_values(ascending=False)
+    
+    ### Apresentação dos indicadores
+    
+    st.header("Indicadores Gerais")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Preço Médio Litro Externo (R$)", f"{preco_medio_externo:.2f}" if not np.isnan(preco_medio_externo) else "N/D")
+    with col2:
+        st.metric("Preço Médio Litro Interno (R$)", "N/D (sem dados de valor)")
+    
+    st.subheader("Total de Litros Abastecidos por Veículo (Interno)")
+    st.dataframe(litros_interno_por_placa.to_frame().rename(columns={"Quantidade de litros": "Litros Internos"}))
+    
+    st.subheader("Total de Litros Abastecidos por Veículo (Externo)")
+    st.dataframe(litros_externo_por_placa.to_frame().rename(columns={"Quantidade de litros": "Litros Externos"}))
+    
+    st.subheader("Total Gasto Externo por Veículo (R$)")
+    st.dataframe(gasto_externo_por_placa.to_frame())
+    
+    st.subheader("Consumo Médio (km/l) por Veículo (Baseado no Externo)")
+    st.dataframe(consumo_medio_por_placa.to_frame())
+    
+    ### Gráficos profissionais
+    
+    st.header("Visualizações Gráficas")
+    
+    fig1, ax1 = plt.subplots(figsize=(10,5))
+    litros_interno_por_placa.plot(kind='bar', ax=ax1, color='orange')
+    ax1.set_title('Litros Abastecidos Internamente por Veículo')
+    ax1.set_xlabel('Placa')
+    ax1.set_ylabel('Litros')
+    ax1.grid(axis='y')
+    st.pyplot(fig1)
+    
+    fig2, ax2 = plt.subplots(figsize=(10,5))
+    litros_externo_por_placa.plot(kind='bar', ax=ax2, color='green')
+    ax2.set_title('Litros Abastecidos Externamente por Veículo')
+    ax2.set_xlabel('Placa')
+    ax2.set_ylabel('Litros')
+    ax2.grid(axis='y')
+    st.pyplot(fig2)
+    
+    fig3, ax3 = plt.subplots(figsize=(10,5))
+    gasto_externo_por_placa.plot(kind='bar', ax=ax3, color='red')
+    ax3.set_title('Gasto Total Externo por Veículo (R$)')
+    ax3.set_xlabel('Placa')
+    ax3.set_ylabel('Reais')
+    ax3.grid(axis='y')
+    st.pyplot(fig3)
+    
+    fig4, ax4 = plt.subplots(figsize=(10,5))
+    consumo_medio_por_placa.plot(kind='bar', ax=ax4, color='blue')
+    ax4.set_title('Consumo Médio (km/l) por Veículo')
+    ax4.set_xlabel('Placa')
+    ax4.set_ylabel('km/l')
+    ax4.grid(axis='y')
+    st.pyplot(fig4)
+    
+else:
+    st.info("Por favor, faça upload dos arquivos de Abastecimento Interno e Externo para continuar.")
