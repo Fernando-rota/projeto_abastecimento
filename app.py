@@ -1,347 +1,220 @@
-# app.py
-import re
-from typing import List, Optional, Dict
-
-import numpy as np
+import streamlit as st
 import pandas as pd
 import plotly.express as px
-import streamlit as st
+import numpy as np
 
-st.set_page_config(page_title="Dashboard Abastecimento (Interno+Externo)", layout="wide")
-
-
-# ---------------------------
-# Utilitários
-# ---------------------------
-def try_parse_number(x):
-    """Parseia números monetários tanto BR (1.234,56 / R$ 1.234,56) quanto EN (1234.56)."""
-    if pd.isna(x):
-        return np.nan
-    s = str(x).strip()
-    if s == "":
-        return np.nan
-    # remove R$ e espaços
-    s = re.sub(r"[Rr]\$\s*", "", s)
-    # se tem '.' e ',' -> assume '.' thousands e ',' decimal
-    if "." in s and "," in s:
-        s = s.replace(".", "").replace(",", ".")
-    # se só tem ',' -> troca por '.'
-    elif "," in s and "." not in s:
-        s = s.replace(",", ".")
-    # remove outros caracteres possíveis
-    s = re.sub(r"[^\d\.\-]", "", s)
+@st.cache_data
+def carregar_dados(arquivo):
     try:
-        return float(s)
-    except Exception:
-        return np.nan
+        df_interno = pd.read_excel(arquivo, sheet_name='Abastecimento Interno')
+        df_externo = pd.read_excel(arquivo, sheet_name='Abastecimento Externo')
+        return df_interno, df_externo
+    except Exception as e:
+        st.error(f"Erro ao carregar planilha: {e}")
+        return None, None
 
+def limpa_monetario(col):
+    return pd.to_numeric(col.astype(str).str.replace(r'R\$\s*', '', regex=True).str.replace(',', '.'), errors='coerce')
 
-def find_column(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
-    """
-    Tenta encontrar no dataframe a coluna que corresponde a qualquer dos 'candidates'
-    (comparação case-insensitive, tenta substring).
-    """
-    cols_map = {c.lower().strip(): c for c in df.columns}
-    for cand in candidates:
-        if cand.lower() in cols_map:
-            return cols_map[cand.lower()]
-    # tentativa por substring
-    for k_lower, orig in cols_map.items():
-        for cand in candidates:
-            if cand.lower() in k_lower:
-                return orig
-    return None
+def prepara_dados(df_interno, df_externo):
+    # --- Interno ---
+    df_interno['Data'] = pd.to_datetime(df_interno['Data'], dayfirst=True, errors='coerce')
+    df_interno = df_interno.dropna(subset=['Data'])
+    df_interno['AnoMes'] = df_interno['Data'].dt.to_period('M').astype(str)
+    df_interno['Quantidade de litros'] = pd.to_numeric(df_interno['Quantidade de litros'], errors='coerce')
+    df_interno['KM Atual'] = pd.to_numeric(df_interno['KM Atual'], errors='coerce')
+    df_interno['Valor Unitario'] = limpa_monetario(df_interno.get('Valor Unitario', pd.Series()))
+    df_interno['Valor Total'] = pd.to_numeric(df_interno.get('Valor Total', pd.Series()), errors='coerce')
+    df_interno['Origem'] = 'Interno'
+    df_interno['Tipo'] = df_interno['Tipo'].str.lower()
 
+    # --- Externo ---
+    df_externo['Data'] = pd.to_datetime(df_externo['Data'], dayfirst=True, errors='coerce')
+    df_externo = df_externo.dropna(subset=['Data'])
+    df_externo['AnoMes'] = df_externo['Data'].dt.to_period('M').astype(str)
+    df_externo['Quantidade de litros'] = pd.to_numeric(df_externo['Quantidade de litros'], errors='coerce')
+    df_externo['KM Atual'] = pd.to_numeric(df_externo['KM Atual'], errors='coerce')
+    df_externo['Valor Unitario'] = limpa_monetario(df_externo.get('Valor Unitario', pd.Series()))
+    df_externo['Valor Total'] = limpa_monetario(df_externo.get('Valor Total', pd.Series()))
+    df_externo['Origem'] = 'Externo'
+    df_externo['Tipo'] = 'externo'
 
-# ---------------------------
-# Carregamento e padronização
-# ---------------------------
-@st.cache_data(show_spinner=True)
-def load_two_sheets(file) -> Dict[str, pd.DataFrame]:
-    """Lê o arquivo Excel e retorna dicionário com até duas folhas lidas."""
-    xls = pd.ExcelFile(file)
-    sheets = xls.sheet_names
-    # preferir nomes exatos
-    prefer = ["Abastecimento Interno", "Abastecimento Externo"]
-    out = {}
-    for p in prefer:
-        if p in sheets:
-            out[p] = pd.read_excel(xls, sheet_name=p)
-    # se alguma preferida ausente, pega as primeiras folhas
-    if len(out) < 2:
-        for s in sheets:
-            if s not in out and len(out) < 2:
-                out[s] = pd.read_excel(xls, sheet_name=s)
-    return out
+    return df_interno, df_externo
 
+def calcula_preco_medio_entrada(df_interno):
+    # Preço médio por litro das entradas no tanque (placa "-")
+    entradas = df_interno[(df_interno['Tipo'] == 'entrada')]
+    # Supondo que entrada no tanque não tem placa ou placa '-'
+    entradas = entradas[entradas['Placa'].isin(['-', None, ''] ) | entradas['Placa'].isna()]
+    if entradas.empty:
+        return 0
+    litros_totais = entradas['Quantidade de litros'].sum()
+    valor_total = (entradas['Quantidade de litros'] * entradas['Valor Unitario']).sum()
+    preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
+    return preco_medio
 
-def standardize_df(df: pd.DataFrame, origem_label: str) -> pd.DataFrame:
-    """
-    Padroniza um DataFrame de abastecimento para as colunas:
-    data, AnoMes, placa, qtd_litros, valor_unit, valor_total, km, descricao, tipo, origem
-    """
-    df = df.rename(columns=lambda c: str(c).strip())  # trim cols
-    # candidatas por campo (variações comuns)
-    mapper = {
-        "data": ["data", "date", "carimbo de data/hora", "carimbo", "data_hora"],
-        "placa": ["placa", "plate"],
-        "qtd_litros": ["quantidade de litros", "quantidade litros", "quantidade_de_litros", "litros", "qtd_litros"],
-        "valor_unit": ["valor unitario", "valor unitário", "valor_unitario", "valor_unit"],
-        "valor_total": ["valor total", "valor_total", "valor pago", "valor_pago", "valor"],
-        "km": ["km atual", "km_atual", "km", "odometro", "odômetro", "kmatual"],
-        "descricao": ["descrição despesa", "descrição do abastecimento", "descricao despesa", "descricao", "descrição"],
-        "tipo": ["tipo", "tipo abastecimento", "type"]
-    }
+def prepara_consumo(df_interno, df_externo):
+    # preço médio entrada tanque interno
+    preco_entrada = calcula_preco_medio_entrada(df_interno)
 
-    found = {}
-    for key, cands in mapper.items():
-        col = find_column(df, cands)
-        found[key] = col
+    # Filtra saídas (abastecimentos para veículos)
+    saidas = df_interno[df_interno['Tipo'] == 'saída'].copy()
+    # Substituir Valor Unitario das saídas pelo preco médio calculado
+    saidas['Valor Unitario Calc'] = preco_entrada
+    saidas['Valor Total Calc'] = saidas['Quantidade de litros'] * preco_entrada
 
-    out = df.copy()
+    # Concatenar abastecimento externo e interno saída (abastecimento real)
+    df_comb = pd.concat([
+        saidas[['Data','Placa','Quantidade de litros','Valor Unitario','Valor Total','KM Atual','Origem']],
+        df_externo[['Data','Placa','Quantidade de litros','Valor Unitario','Valor Total','KM Atual','Origem']]
+    ], ignore_index=True)
 
-    # data
-    if found["data"]:
-        out["data"] = pd.to_datetime(out[found["data"]], dayfirst=True, errors="coerce")
-    else:
-        out["data"] = pd.NaT
-        st.warning("Coluna de data não encontrada. Algumas análises dependem de datas.")
+    # Ajustes para valores faltantes em Valor Total e Unitario no externo
+    df_comb['Valor Unitario'] = df_comb['Valor Unitario'].fillna(df_comb['Valor Total'] / df_comb['Quantidade de litros'])
+    df_comb['Valor Total'] = df_comb['Valor Total'].fillna(df_comb['Quantidade de litros'] * df_comb['Valor Unitario'])
 
-    out["AnoMes"] = out["data"].dt.to_period("M").astype(str)
+    # Remove linhas sem placa ou litros
+    df_comb = df_comb.dropna(subset=['Placa', 'Quantidade de litros', 'Data'])
 
-    # placa
-    if found["placa"]:
-        out["placa"] = out[found["placa"]].astype(str).str.strip()
-    else:
-        out["placa"] = np.nan
+    return df_comb
 
-    # quantidade de litros
-    if found["qtd_litros"]:
-        out["qtd_litros"] = pd.to_numeric(out[found["qtd_litros"]].astype(str).str.replace(",", "."), errors="coerce")
-    else:
-        out["qtd_litros"] = np.nan
+def calcula_autonomia(df):
+    # autonomia por placa = (km max - km min) / total litros
+    resultados = []
+    for placa, g in df.groupby('Placa'):
+        km_max = g['KM Atual'].max()
+        km_min = g['KM Atual'].min()
+        litros = g['Quantidade de litros'].sum()
+        if pd.notnull(km_max) and pd.notnull(km_min) and litros > 0:
+            autonomia = (km_max - km_min) / litros
+        else:
+            autonomia = np.nan
+        resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
+    df_auto = pd.DataFrame(resultados).sort_values(by='Autonomia (km/L)', ascending=False)
+    return df_auto
 
-    # valor unitario
-    if found["valor_unit"]:
-        out["valor_unit"] = out[found["valor_unit"]].apply(try_parse_number)
-    else:
-        out["valor_unit"] = np.nan
+def calcula_custo_por_km(df_comb):
+    resultados = []
+    for placa, g in df_comb.groupby('Placa'):
+        km_max = g['KM Atual'].max()
+        km_min = g['KM Atual'].min()
+        km_rodados = km_max - km_min if pd.notnull(km_max) and pd.notnull(km_min) else np.nan
+        custo_total = g['Valor Total'].sum()
+        custo_km = custo_total / km_rodados if km_rodados > 0 else np.nan
+        resultados.append({'Placa': placa, 'Custo Total (R$)': custo_total, 'Km Rodados': km_rodados, 'Custo por Km (R$)': custo_km})
+    df_custo = pd.DataFrame(resultados).sort_values(by='Custo por Km (R$)')
+    return df_custo
 
-    # valor total
-    if found["valor_total"]:
-        out["valor_total"] = out[found["valor_total"]].apply(try_parse_number)
-    else:
-        # tenta calcular valor_total = valor_unit * qtd_litros
-        out["valor_total"] = out["valor_unit"] * out["qtd_litros"]
+def main():
+    st.title("🚛 Dashboard Avançado de Abastecimento")
 
-    # km
-    if found["km"]:
-        out["km"] = pd.to_numeric(out[found["km"]].astype(str).str.replace(".", "").str.replace(",", "."), errors="coerce")
-    else:
-        out["km"] = np.nan
+    arquivo = st.sidebar.file_uploader("Faça upload da planilha Excel com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=['xlsx'])
+    if arquivo is None:
+        st.warning("Por favor, faça upload do arquivo para continuar.")
+        return
 
-    # descricao (combustível)
-    if found["descricao"]:
-        out["descricao"] = out[found["descricao"]].astype(str).str.strip()
-    else:
-        out["descricao"] = "DESCONHECIDO"
+    df_interno, df_externo = carregar_dados(arquivo)
+    if df_interno is None or df_externo is None:
+        return
 
-    # tipo (opcional)
-    if found["tipo"]:
-        out["tipo"] = out[found["tipo"]].astype(str).str.strip().str.lower()
-    else:
-        out["tipo"] = np.nan
+    df_interno, df_externo = prepara_dados(df_interno, df_externo)
 
-    out["origem"] = origem_label
+    df_comb = prepara_consumo(df_interno, df_externo)
 
-    # retorna apenas colunas úteis
-    cols = ["data", "AnoMes", "placa", "qtd_litros", "valor_unit", "valor_total", "km", "descricao", "tipo", "origem"]
-    for c in cols:
-        if c not in out.columns:
-            out[c] = np.nan
-    return out[cols]
+    # Filtros
+    placas = ['Todas'] + sorted(df_comb['Placa'].dropna().unique())
+    origens = ['Todos', 'Interno', 'Externo']  # Origem aqui reflete a origem original, mas para combinado só temos "Interno" e "Externo"
+    data_min = df_comb['Data'].min().date()
+    data_max = df_comb['Data'].max().date()
 
-
-# ---------------------------
-# Cálculos principais
-# ---------------------------
-def compute_autonomy_table(df: pd.DataFrame) -> pd.DataFrame:
-    """Calcula km_min, km_max, litros_total e autonomia por placa (numero)."""
-    rows = []
-    grouped = df.groupby("placa", dropna=True)
-    for placa, g in grouped:
-        km_min = g["km"].min()
-        km_max = g["km"].max()
-        litros = g["qtd_litros"].sum()
-        autonomia = (km_max - km_min) / litros if pd.notna(km_min) and pd.notna(km_max) and litros > 0 else np.nan
-        rows.append({"placa": placa, "km_min": km_min, "km_max": km_max, "litros": litros, "autonomia": autonomia})
-    df_aut = pd.DataFrame(rows)
-    df_aut = df_aut.sort_values("autonomia", ascending=False, na_position="last")
-    return df_aut
-
-
-# ---------------------------
-# App principal
-# ---------------------------
-def app():
-    st.title("🚛 Dashboard Abastecimento (Interno + Externo)")
-
-    uploaded = st.sidebar.file_uploader("Faça upload do arquivo .xlsx (duas abas: Interno + Externo)", type=["xlsx"])
-    if not uploaded:
-        st.info("Carregue a planilha com as abas 'Abastecimento Interno' e 'Abastecimento Externo'.")
-        st.stop()
-
-    # leitura
-    sheets = load_two_sheets(uploaded)
-    if len(sheets) < 2:
-        st.error("Não foram encontradas duas abas. Verifique o arquivo.")
-        st.stop()
-
-    # detectar qual é interno/externo
-    keys = list(sheets.keys())
-    name_interno = None
-    name_externo = None
-    for name in keys:
-        ln = name.lower()
-        if "intern" in ln:
-            name_interno = name
-        if "extern" in ln or "externo" in ln:
-            name_externo = name
-    if not name_interno:
-        name_interno = keys[0]
-    if not name_externo:
-        name_externo = keys[1] if len(keys) > 1 else keys[0]
-
-    df_raw_int = sheets[name_interno]
-    df_raw_ext = sheets[name_externo]
-
-    # padroniza
-    df_int = standardize_df(df_raw_int, origem_label="Interno")
-    df_ext = standardize_df(df_raw_ext, origem_label="Externo")
-
-    # concatena
-    df = pd.concat([df_int, df_ext], ignore_index=True)
-
-    # remove registros sem placa/data/litros (essenciais)
-    df = df[(df["placa"].notna()) & (df["data"].notna()) & (df["qtd_litros"].notna())]
-
-    if df.empty:
-        st.error("Após padronização não há dados válidos (placa/data/litros). Verifique planilha.")
-        st.stop()
-
-    # -----------------------
-    # FILTROS NA SIDEBAR
-    # -----------------------
     st.sidebar.header("Filtros")
-    placas = ["Todas"] + sorted(df["placa"].dropna().unique().tolist())
-    placa_sel = st.sidebar.selectbox("Placa", placas)
+    placa_sel = st.sidebar.selectbox("Selecione a placa", placas)
+    data_range = st.sidebar.date_input("Selecione o período", [data_min, data_max], min_value=data_min, max_value=data_max)
 
-    origens = ["Todos"] + sorted(df["origem"].unique().tolist())
-    origem_sel = st.sidebar.selectbox("Origem", origens)
+    # Filtra o dataframe combinado
+    df_filtrado = df_comb.copy()
+    if placa_sel != 'Todas':
+        df_filtrado = df_filtrado[df_filtrado['Placa'] == placa_sel]
 
-    combustiveis = sorted(df["descricao"].dropna().unique().tolist())
-    combustivel_sel = st.sidebar.multiselect("Tipo combustível (multiselect)", options=combustiveis, default=combustiveis)
+    if len(data_range) == 2:
+        dt_inicio, dt_fim = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
+        df_filtrado = df_filtrado[(df_filtrado['Data'] >= dt_inicio) & (df_filtrado['Data'] <= dt_fim)]
 
-    # período
-    data_min = df["data"].min().date()
-    data_max = df["data"].max().date()
-    data_inicio, data_fim = st.sidebar.date_input("Período", [data_min, data_max], min_value=data_min, max_value=data_max)
+    if df_filtrado.empty:
+        st.warning("Nenhum dado encontrado para os filtros aplicados.")
+        return
 
-    # aplicar filtros
-    df_f = df.copy()
-    if placa_sel != "Todas":
-        df_f = df_f[df_f["placa"] == placa_sel]
-    if origem_sel != "Todos":
-        df_f = df_f[df_f["origem"] == origem_sel]
-    if combustivel_sel:
-        df_f = df_f[df_f["descricao"].isin(combustivel_sel)]
-    df_f = df_f[(df_f["data"] >= pd.to_datetime(data_inicio)) & (df_f["data"] <= pd.to_datetime(data_fim))]
+    # Indicadores gerais
+    litros_totais = df_filtrado['Quantidade de litros'].sum()
+    valor_total = df_filtrado['Valor Total'].sum()
+    preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
 
-    if df_f.empty:
-        st.warning("Sem dados para os filtros aplicados.")
-        st.stop()
+    # Autonomia e custo por km
+    autonomia_df = calcula_autonomia(df_filtrado)
+    custo_df = calcula_custo_por_km(df_filtrado)
 
-    # -----------------------
-    # INDICADORES
-    # -----------------------
-    total_litros = df_f["qtd_litros"].sum()
-    total_custo = df_f["valor_total"].sum()
-    preco_medio = total_custo / total_litros if total_litros > 0 else np.nan
+    # Mesclando indicadores para ranking
+    df_rank = autonomia_df.merge(custo_df, on='Placa', how='outer')
+    df_rank['Autonomia (km/L)'] = df_rank['Autonomia (km/L)'].round(3)
+    df_rank['Custo Total (R$)'] = df_rank['Custo Total (R$)'].round(2)
+    df_rank['Custo por Km (R$)'] = df_rank['Custo por Km (R$)'].round(4)
 
-    # autonomia tabela
-    aut_df = compute_autonomy_table(df_f)
+    # Ranking eficiência (top 25% melhor autonomia)
+    q1 = df_rank['Autonomia (km/L)'].quantile(0.25)
+    q3 = df_rank['Autonomia (km/L)'].quantile(0.75)
 
-    # resumo por combustível
-    resumo_comb = df_f.groupby("descricao").agg(
-        litros_total=("qtd_litros", "sum"),
-        custo_total=("valor_total", "sum"),
-        valor_unit_medio=("valor_unit", lambda x: np.nanmean(x.dropna()) if x.dropna().size > 0 else np.nan)
-    ).reset_index().sort_values("litros_total", ascending=False)
-    resumo_comb["preco_medio_calc"] = resumo_comb["custo_total"] / resumo_comb["litros_total"]
+    def classifica_eficiencia(x):
+        if pd.isna(x):
+            return 'Sem dados'
+        elif x >= q3:
+            return 'Econômico'
+        elif x <= q1:
+            return 'Ineficiente'
+        else:
+            return 'Normal'
 
-    # séries por mês
-    series_litros = df_f.groupby(["AnoMes", "origem"]).agg(Litros=("qtd_litros", "sum")).reset_index()
-    series_price = df_f.groupby(["AnoMes", "origem"]).apply(
-        lambda x: x["valor_total"].sum() / x["qtd_litros"].sum() if x["qtd_litros"].sum() > 0 else np.nan
-    ).reset_index(name="Preço Médio (R$/L)")
+    df_rank['Classificação'] = df_rank['Autonomia (km/L)'].apply(classifica_eficiencia)
 
-    # -----------------------
-    # LAYOUT POR ABAS
-    # -----------------------
-    tab1, tab2, tab3, tab4 = st.tabs(["Resumo", "Autonomia", "Por Combustível", "Gráficos"])
+    # Gráficos de tendência mensal (litros e custo médio)
+    df_filtrado['AnoMes'] = df_filtrado['Data'].dt.to_period('M').astype(str)
+    litros_mes = df_filtrado.groupby(['AnoMes']).agg({'Quantidade de litros':'sum'}).reset_index()
+    custo_mes = df_filtrado.groupby(['AnoMes']).apply(lambda x: x['Valor Total'].sum()/x['Quantidade de litros'].sum() if x['Quantidade de litros'].sum()>0 else 0).reset_index(name='Preço Médio')
+
+    # Layout com abas
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Resumo Geral",
+        "🚛 Ranking Eficiência",
+        "⛽ Tendência Mensal",
+        "💲 Custo por Km"
+    ])
 
     with tab1:
-        st.header("Resumo Geral")
+        st.header("Resumo Geral do Período")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Litros (período)", f"{total_litros:,.2f} L")
-        c2.metric("Custo Total (período)", f"R$ {total_custo:,.2f}")
-        c3.metric("Preço Médio (R$/L)", f"R$ {preco_medio:,.3f}")
-
-        st.markdown("**Top 10 placas por litros (no período)**")
-        top_placas = df_f.groupby("placa")["qtd_litros"].sum().reset_index().sort_values("qtd_litros", ascending=False).head(10)
-        st.dataframe(top_placas.rename(columns={"placa": "Placa", "qtd_litros": "Litros"}), use_container_width=True)
-
-        # botão para exportar os dados filtrados
-        csv = df_f.to_csv(index=False).encode("utf-8")
-        st.download_button("⤓ Exportar dados filtrados (CSV)", csv, "abastecimento_filtrado.csv", "text/csv")
+        c1.metric("Litros Totais", f"{litros_totais:,.2f} L")
+        c2.metric("Valor Total Gasto", f"R$ {valor_total:,.2f}")
+        c3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f} / L")
 
     with tab2:
-        st.header("Autonomia por Placa (km/L) — ordenada decrescente")
-        display_aut = aut_df.copy()
-        display_aut["autonomia_str"] = display_aut["autonomia"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
-        display_aut = display_aut.rename(columns={
-            "placa": "Placa", "km_min": "KM Mínimo", "km_max": "KM Máximo", "litros": "Litros", "autonomia": "Autonomia (km/L)"
-        })
-        st.dataframe(display_aut[["Placa", "KM Mínimo", "KM Máximo", "Litros", "autonomia_str"]].rename(columns={"autonomia_str": "Autonomia (km/L)"}), use_container_width=True)
+        st.header("Ranking de Eficiência dos Veículos")
+        st.dataframe(df_rank.style.format({
+            'Autonomia (km/L)': "{:.3f}",
+            'Custo Total (R$)': "R$ {:,.2f}",
+            'Custo por Km (R$)': "R$ {:.4f}"
+        }).set_precision(3))
 
     with tab3:
-        st.header("Consumo e Custo por Tipo de Combustível")
-        resumo_comb_display = resumo_comb.rename(columns={
-            "descricao": "Combustível",
-            "litros_total": "Litros",
-            "custo_total": "Custo Total",
-            "valor_unit_medio": "Valor Unitário Médio",
-            "preco_medio_calc": "Preço Médio (R$/L)"
-        })
-        st.dataframe(resumo_comb_display, use_container_width=True)
-
-        fig_cost = px.bar(resumo_comb_display, x="Combustível", y="Custo Total",
-                          hover_data=["Litros", "Preço Médio (R$/L)"], title="Custo por Combustível")
-        st.plotly_chart(fig_cost, use_container_width=True)
-
-    with tab4:
-        st.header("Séries Mensais")
-        fig1 = px.bar(series_litros, x="AnoMes", y="Litros", color="origem", barmode="group",
-                      title="Litros por Mês (Interno x Externo)")
+        st.header("Tendência Mensal de Litros Abastecidos")
+        fig1 = px.bar(litros_mes, x='AnoMes', y='Quantidade de litros', labels={'AnoMes':'Mês', 'Quantidade de litros':'Litros'}, title="Litros Mensais Abastecidos")
         st.plotly_chart(fig1, use_container_width=True)
 
-        fig2 = px.line(series_price, x="AnoMes", y="Preço Médio (R$/L)", color="origem", markers=True,
-                       title="Preço Médio por Mês (Interno x Externo)")
+        st.header("Tendência Mensal do Preço Médio por Litro")
+        fig2 = px.line(custo_mes, x='AnoMes', y='Preço Médio', markers=True, labels={'AnoMes':'Mês', 'Preço Médio':'R$ / Litro'}, title="Preço Médio Mensal")
         st.plotly_chart(fig2, use_container_width=True)
 
-    # dicas
-    st.sidebar.markdown("---")
-    st.sidebar.info("Dicas: use o filtro de combustíveis (multiselect) para comparar tipos; exporte os dados filtrados com o botão.")
+    with tab4:
+        st.header("Custo por Km Rodado por Veículo")
+        st.dataframe(df_rank[['Placa', 'Km Rodados', 'Custo por Km (R$)']].sort_values(by='Custo por Km (R$)'))
 
 if __name__ == "__main__":
-    app()
+    main()
