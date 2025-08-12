@@ -32,7 +32,7 @@ df_externo["Valor Unitario"] = (
 )
 df_externo["Valor Unitario"] = pd.to_numeric(df_externo["Valor Unitario"], errors="coerce")
 
-# === Cálculo do consumo médio por placa ===
+# === Funções de cálculo ===
 def consumo_medio(df1, df2):
     df = pd.concat([df1[["Placa", "KM Atual"]], df2[["Placa", "KM Atual"]]])
     resultado = []
@@ -43,46 +43,60 @@ def consumo_medio(df1, df2):
         resultado.append({"Placa": placa, "KM Rodado": km_rodado})
     return pd.DataFrame(resultado).sort_values(by="KM Rodado", ascending=False)
 
-df_consumo = consumo_medio(df_interno, df_externo)
-
-# === Cálculo do valor médio ponderado (a partir de julho) ===
 def preco_medio_ponderado(df):
     df_filtrado = df[df["Data"].dt.month >= 7]
     return df_filtrado.groupby(df_filtrado["Data"].dt.to_period("M")).apply(
         lambda x: pd.Series({
             "Litros": x["Quantidade de litros"].sum(),
-            "Preco Medio (R$/L)": (x["Valor Unitario"] * x["Quantidade de litros"]).sum() / x["Quantidade de litros"].sum()
+            "Preco Medio (R$/L)": (x["Valor Unitario"] * x["Quantidade de litros"]).sum() / x["Quantidade de litros"].sum(),
+            "Custo Total (R$)": (x["Valor Unitario"] * x["Quantidade de litros"]).sum()
         })
     ).reset_index()
 
+# === Resultados ===
+df_consumo = consumo_medio(df_interno, df_externo)
 preco_interno = preco_medio_ponderado(df_interno)
 preco_externo = preco_medio_ponderado(df_externo)
 
+# Renomeia coluna de data
+preco_interno.rename(columns={"Data": "Periodo"}, inplace=True)
+preco_externo.rename(columns={"Data": "Periodo"}, inplace=True)
+
 # === Dashboard Streamlit ===
 st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
-
 st.title("📊 Dashboard de Abastecimento")
 
-col1, col2 = st.columns(2)
+aba1, aba2, aba3 = st.tabs(["📌 Consumo Médio", "⛽ Preço Médio Ponderado", "📅 Indicadores Mensais"])
 
-with col1:
+with aba1:
     st.subheader("Consumo Médio por Placa (KM Rodado)")
-    st.dataframe(df_consumo)
+    st.dataframe(df_consumo, use_container_width=True)
 
-with col2:
+with aba2:
     st.subheader("Preço Médio Ponderado - Interno (a partir de Julho)")
-    st.dataframe(preco_interno.sort_values(by="Preco Medio (R$/L)", ascending=False))
+    st.dataframe(preco_interno.sort_values(by="Preco Medio (R$/L)", ascending=False), use_container_width=True)
 
     st.subheader("Preço Médio Ponderado - Externo (a partir de Julho)")
-    st.dataframe(preco_externo.sort_values(by="Preco Medio (R$/L)", ascending=False))
+    st.dataframe(preco_externo.sort_values(by="Preco Medio (R$/L)", ascending=False), use_container_width=True)
 
-# === Gráfico de preços médios ===
-fig = px.line(
-    pd.concat([
+    fig = px.line(
+        pd.concat([
+            preco_interno.assign(Tipo="Interno"),
+            preco_externo.assign(Tipo="Externo")
+        ]),
+        x="Periodo", y="Preco Medio (R$/L)", color="Tipo", markers=True,
+        title="Preço Médio Ponderado do Combustível (Mensal)"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+with aba3:
+    st.subheader("Litros e Custos Mensais - Interno x Externo")
+    indicadores = pd.concat([
         preco_interno.assign(Tipo="Interno"),
         preco_externo.assign(Tipo="Externo")
-    ]),
-    x="Data", y="Preco Medio (R$/L)", color="Tipo", markers=True,
-    title="Preço Médio Ponderado do Combustível (Mensal)"
-)
-st.plotly_chart(fig, use_container_width=True)
+    ])
+    fig_litros = px.bar(indicadores, x="Periodo", y="Litros", color="Tipo", barmode="group", title="Litros Abastecidos por Mês")
+    fig_custos = px.bar(indicadores, x="Periodo", y="Custo Total (R$)", color="Tipo", barmode="group", title="Custo Total por Mês")
+    
+    st.plotly_chart(fig_litros, use_container_width=True)
+    st.plotly_chart(fig_custos, use_container_width=True)
