@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-
-st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
+import datetime
 
 def limpa_monetario(col):
     return pd.to_numeric(col.astype(str).str.replace(r'R\$\s*', '', regex=True), errors='coerce')
@@ -30,74 +27,54 @@ def processa_externo(df):
     df['Valor Total'] = limpa_monetario(df['Valor Total'])
     return df
 
-def calcula_indicadores(df):
-    agrupado = df.groupby('AnoMes').agg(
-        litros_totais=('Quantidade de litros', 'sum'),
-        valor_total_pago=('Valor Total', 'sum')
-    ).reset_index()
-    agrupado['preco_medio_litro'] = agrupado.apply(
-        lambda r: r['valor_total_pago'] / r['litros_totais'] if r['litros_totais'] > 0 else 0, axis=1)
-    agrupado = agrupado.sort_values('AnoMes', ascending=False)
-    return agrupado
-
-def plota_graficos(df, titulo):
-    st.markdown(f"### Gráficos de {titulo}")
-    fig, ax1 = plt.subplots(figsize=(12,5))
-    sns.barplot(x='AnoMes', y='litros_totais', data=df, ax=ax1, color='skyblue')
-    ax1.set_ylabel('Litros Totais')
-    ax1.set_xlabel('Mês')
-    ax1.tick_params(axis='x', rotation=45)
-    ax2 = ax1.twinx()
-    sns.lineplot(x='AnoMes', y='preco_medio_litro', data=df, ax=ax2, color='red', marker="o")
-    ax2.set_ylabel('Preço Médio R$/Litro')
-    plt.title(f"Litros Totais e Preço Médio - {titulo}")
-    st.pyplot(fig)
+def calcula_indicadores_mes(df, ano_mes):
+    df_mes = df[df['AnoMes'] == ano_mes]
+    litros = df_mes['Quantidade de litros'].sum()
+    valor = df_mes['Valor Total'].sum()
+    preco_medio = valor / litros if litros > 0 else 0
+    return litros, valor, preco_medio
 
 def main():
-    st.title("🚛 Dashboard de Abastecimento - Interno e Externo")
+    st.title("🚛 Indicadores Mensais de Abastecimento - Interno e Externo")
 
-    st.sidebar.header("Upload da planilha Excel com duas abas")
-    arquivo = st.sidebar.file_uploader("Escolha o arquivo Excel (.xlsx)", type=['xlsx'])
-    
+    arquivo = st.sidebar.file_uploader("Upload do arquivo Excel (.xlsx) com abas 'Abastecimento Interno' e 'Abastecimento Externo'", type=['xlsx'])
+
     if arquivo is None:
-        st.warning("Faça upload do arquivo Excel que contenha as abas 'Abastecimento Interno' e 'Abastecimento Externo'.")
+        st.warning("Faça upload da planilha com as duas abas para continuar.")
         return
 
-    # Lê as duas abas
     df_interno = pd.read_excel(arquivo, sheet_name='Abastecimento Interno')
     df_externo = pd.read_excel(arquivo, sheet_name='Abastecimento Externo')
-
-    st.subheader("Amostra Abastecimento Interno")
-    st.dataframe(df_interno.head())
-    st.subheader("Amostra Abastecimento Externo")
-    st.dataframe(df_externo.head())
 
     df_interno_proc = processa_interno(df_interno)
     df_externo_proc = processa_externo(df_externo)
 
-    indicadores_interno = calcula_indicadores(df_interno_proc)
-    indicadores_externo = calcula_indicadores(df_externo_proc)
+    hoje = datetime.date.today()
+    ano_mes_atual = hoje.strftime('%Y-%m')
 
-    # Consolidação mensal
-    consolidado = pd.merge(
-        indicadores_interno, indicadores_externo,
-        on='AnoMes', how='outer', suffixes=('_interno', '_externo')).fillna(0)
+    litros_interno, valor_interno, preco_interno = calcula_indicadores_mes(df_interno_proc, ano_mes_atual)
+    litros_externo, valor_externo, preco_externo = calcula_indicadores_mes(df_externo_proc, ano_mes_atual)
 
-    consolidado['litros_totais'] = consolidado['litros_totais_interno'] + consolidado['litros_totais_externo']
-    consolidado['valor_total_pago'] = consolidado['valor_total_pago_interno'] + consolidado['valor_total_pago_externo']
-    consolidado['preco_medio_litro'] = consolidado.apply(
-        lambda r: r['valor_total_pago'] / r['litros_totais'] if r['litros_totais'] > 0 else 0, axis=1)
+    litros_total = litros_interno + litros_externo
+    valor_total = valor_interno + valor_externo
+    preco_medio_total = valor_total / litros_total if litros_total > 0 else 0
 
-    consolidado = consolidado[['AnoMes', 'litros_totais', 'valor_total_pago', 'preco_medio_litro']].sort_values('AnoMes', ascending=False)
+    st.subheader(f"Indicadores do mês atual: {ano_mes_atual}")
 
-    st.header("Indicadores Consolidados Mensais")
-    st.dataframe(consolidado.style.format({
-        'litros_totais': '{:.2f}',
-        'valor_total_pago': 'R$ {:.2f}',
-        'preco_medio_litro': 'R$ {:.3f}'
-    }))
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Litros Internos", f"{litros_interno:.2f} L")
+    col2.metric("Valor Interno", f"R$ {valor_interno:.2f}")
+    col3.metric("Preço Médio Interno", f"R$ {preco_interno:.3f} / L")
 
-    plota_graficos(consolidado, "Consolidado")
+    col4, col5, col6 = st.columns(3)
+    col4.metric("Litros Externos", f"{litros_externo:.2f} L")
+    col5.metric("Valor Externo", f"R$ {valor_externo:.2f}")
+    col6.metric("Preço Médio Externo", f"R$ {preco_externo:.3f} / L")
+
+    col7, col8, col9 = st.columns(3)
+    col7.metric("Litros Totais", f"{litros_total:.2f} L")
+    col8.metric("Valor Total", f"R$ {valor_total:.2f}")
+    col9.metric("Preço Médio Total", f"R$ {preco_medio_total:.3f} / L")
 
 if __name__ == "__main__":
     main()
