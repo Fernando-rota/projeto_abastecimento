@@ -1,102 +1,104 @@
-import streamlit as st
 import pandas as pd
-import plotly.express as px
+import streamlit as st
 
-# === Leitura das abas da planilha ===
-arquivo = "abastecimento.xlsx"
-df_interno = pd.read_excel(arquivo, sheet_name="Abastecimento Interno")
-df_externo = pd.read_excel(arquivo, sheet_name="Abastecimento Externo")
+# ============================
+# CONFIGURAÇÃO
+# ============================
+ARQUIVO = "abastecimento.xlsx"  # nome do arquivo local
 
-# === Tratamento de dados ===
-df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce")
-df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce")
+# ============================
+# LEITURA DOS DADOS
+# ============================
+df_interno = pd.read_excel(ARQUIVO, sheet_name="Abastecimento Interno")
+df_externo = pd.read_excel(ARQUIVO, sheet_name="Abastecimento Externo")
 
-# Remove placas inválidas
+# Normalizar colunas
+df_interno.columns = df_interno.columns.str.strip()
+df_externo.columns = df_externo.columns.str.strip()
+
+# Ajustar tipos de dados
+df_interno["Data"] = pd.to_datetime(df_interno["Data"], errors="coerce", dayfirst=True)
+df_externo["Data"] = pd.to_datetime(df_externo["Data"], errors="coerce", dayfirst=True)
+
+# Tratar valores numéricos
+for col in ["Quantidade de litros", "Valor Unitario", "Valor Total", "KM Atual"]:
+    if col in df_interno.columns:
+        df_interno[col] = pd.to_numeric(df_interno[col], errors="coerce", downcast="float")
+
+for col in ["Quantidade de litros", "Valor Unitario", "Valor Total", "KM Atual"]:
+    if col in df_externo.columns:
+        df_externo[col] = pd.to_numeric(df_externo[col], errors="coerce", downcast="float")
+
+# ============================
+# LIMPEZA
+# ============================
+# Remover placas indesejadas
 placas_invalidas = ["-", "correção"]
 df_interno = df_interno[~df_interno["Placa"].isin(placas_invalidas)]
 df_externo = df_externo[~df_externo["Placa"].isin(placas_invalidas)]
 
-# Remove linhas sem data
-df_interno = df_interno.dropna(subset=["Data"])
-df_externo = df_externo.dropna(subset=["Data"])
+# ============================
+# CONSUMO MÉDIO POR PLACA
+# ============================
+def consumo_medio(df):
+    resultados = []
+    for placa, dados in df.groupby("Placa"):
+        km_max = dados["KM Atual"].max()
+        km_min = dados["KM Atual"].min()
+        litros = dados["Quantidade de litros"].sum()
+        if litros > 0 and km_max > km_min:
+            media = (km_max - km_min) / litros
+            resultados.append({"Placa": placa, "Consumo Médio (Km/L)": media})
+    return pd.DataFrame(resultados).sort_values(by="Consumo Médio (Km/L)", ascending=False)
 
-# Converte valores para numérico
-df_interno["Quantidade de litros"] = pd.to_numeric(df_interno["Quantidade de litros"], errors="coerce")
-df_interno["Valor Unitario"] = pd.to_numeric(df_interno["Valor Unitario"], errors="coerce")
+consumo_interno = consumo_medio(df_interno)
+consumo_externo = consumo_medio(df_externo)
 
-df_externo["Quantidade de litros"] = pd.to_numeric(df_externo["Quantidade de litros"], errors="coerce")
-df_externo["Valor Unitario"] = (
-    df_externo["Valor Unitario"].astype(str)
-    .str.replace("R$", "", regex=False)
-    .str.replace(",", ".", regex=False)
-)
-df_externo["Valor Unitario"] = pd.to_numeric(df_externo["Valor Unitario"], errors="coerce")
+# ============================
+# PREÇO MÉDIO INTERNO (apenas a partir de julho)
+# ============================
+df_interno_com_preco = df_interno[df_interno["Valor Unitario"].notna()]
+df_interno_com_preco = df_interno_com_preco[df_interno_com_preco["Data"].dt.month >= 7]
+preco_medio_interno = df_interno_com_preco["Valor Unitario"].mean()
 
-# === Funções de cálculo ===
-def consumo_medio(df1, df2):
-    df = pd.concat([df1[["Placa", "KM Atual"]], df2[["Placa", "KM Atual"]]])
-    resultado = []
-    for placa, grupo in df.groupby("Placa"):
-        km_max = grupo["KM Atual"].max()
-        km_min = grupo["KM Atual"].min()
-        km_rodado = km_max - km_min
-        resultado.append({"Placa": placa, "KM Rodado": km_rodado})
-    return pd.DataFrame(resultado).sort_values(by="KM Rodado", ascending=False)
+# ============================
+# INDICADORES MENSAIS
+# ============================
+def indicadores_mensais(df, tipo):
+    df["AnoMes"] = df["Data"].dt.to_period("M")
+    agg = df.groupby("AnoMes").agg({
+        "Quantidade de litros": "sum",
+        "Valor Total": "sum",
+        "Valor Unitario": "mean"
+    }).reset_index()
+    agg["Tipo"] = tipo
+    return agg
 
-def preco_medio_ponderado(df):
-    df_filtrado = df[df["Data"].dt.month >= 7]
-    return df_filtrado.groupby(df_filtrado["Data"].dt.to_period("M")).apply(
-        lambda x: pd.Series({
-            "Litros": x["Quantidade de litros"].sum(),
-            "Preco Medio (R$/L)": (x["Valor Unitario"] * x["Quantidade de litros"]).sum() / x["Quantidade de litros"].sum(),
-            "Custo Total (R$)": (x["Valor Unitario"] * x["Quantidade de litros"]).sum()
-        })
-    ).reset_index()
+mensal_interno = indicadores_mensais(df_interno, "Interno")
+mensal_externo = indicadores_mensais(df_externo, "Externo")
 
-# === Resultados ===
-df_consumo = consumo_medio(df_interno, df_externo)
-preco_interno = preco_medio_ponderado(df_interno)
-preco_externo = preco_medio_ponderado(df_externo)
+mensal_todos = pd.concat([mensal_interno, mensal_externo])
+mensal_todos = mensal_todos.sort_values(by="AnoMes", ascending=False)
 
-# Renomeia coluna de data
-preco_interno.rename(columns={"Data": "Periodo"}, inplace=True)
-preco_externo.rename(columns={"Data": "Periodo"}, inplace=True)
-
-# === Dashboard Streamlit ===
+# ============================
+# DASHBOARD STREAMLIT
+# ============================
 st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
+
 st.title("📊 Dashboard de Abastecimento")
 
-aba1, aba2, aba3 = st.tabs(["📌 Consumo Médio", "⛽ Preço Médio Ponderado", "📅 Indicadores Mensais"])
+aba1, aba2, aba3 = st.tabs(["🚛 Consumo Médio", "📅 Indicadores Mensais", "💰 Preço Médio Interno"])
 
 with aba1:
-    st.subheader("Consumo Médio por Placa (KM Rodado)")
-    st.dataframe(df_consumo, use_container_width=True)
+    st.subheader("Consumo Médio por Placa - Interno")
+    st.dataframe(consumo_interno, use_container_width=True)
+
+    st.subheader("Consumo Médio por Placa - Externo")
+    st.dataframe(consumo_externo, use_container_width=True)
 
 with aba2:
-    st.subheader("Preço Médio Ponderado - Interno (a partir de Julho)")
-    st.dataframe(preco_interno.sort_values(by="Preco Medio (R$/L)", ascending=False), use_container_width=True)
-
-    st.subheader("Preço Médio Ponderado - Externo (a partir de Julho)")
-    st.dataframe(preco_externo.sort_values(by="Preco Medio (R$/L)", ascending=False), use_container_width=True)
-
-    fig = px.line(
-        pd.concat([
-            preco_interno.assign(Tipo="Interno"),
-            preco_externo.assign(Tipo="Externo")
-        ]),
-        x="Periodo", y="Preco Medio (R$/L)", color="Tipo", markers=True,
-        title="Preço Médio Ponderado do Combustível (Mensal)"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Abastecimento Interno x Externo - Indicadores Mensais")
+    st.dataframe(mensal_todos, use_container_width=True)
 
 with aba3:
-    st.subheader("Litros e Custos Mensais - Interno x Externo")
-    indicadores = pd.concat([
-        preco_interno.assign(Tipo="Interno"),
-        preco_externo.assign(Tipo="Externo")
-    ])
-    fig_litros = px.bar(indicadores, x="Periodo", y="Litros", color="Tipo", barmode="group", title="Litros Abastecidos por Mês")
-    fig_custos = px.bar(indicadores, x="Periodo", y="Custo Total (R$)", color="Tipo", barmode="group", title="Custo Total por Mês")
-    
-    st.plotly_chart(fig_litros, use_container_width=True)
-    st.plotly_chart(fig_custos, use_container_width=True)
+    st.metric(label="Preço Médio Interno (a partir de Jul)", value=f"R$ {preco_medio_interno:.2f}")
