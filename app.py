@@ -18,11 +18,6 @@ def processa_abastecimento(df, interno=True):
     df['Origem'] = 'Interno' if interno else 'Externo'
     if interno and 'Tipo' in df.columns:
         df = df[df['Tipo'].str.lower() == 'entrada']
-    # Normaliza nome da coluna tipo combustível (Descrição Despesa)
-    if 'Descrição Despesa' in df.columns:
-        df['Tipo Combustivel'] = df['Descrição Despesa'].str.strip().str.upper()
-    else:
-        df['Tipo Combustivel'] = "DESCONHECIDO"
     return df
 
 def calcula_autonomia(df):
@@ -57,21 +52,16 @@ def main():
     # Filtros globais
     placas = ['Todas'] + sorted(df['Placa'].dropna().unique())
     anos_meses = ['Todos'] + sorted(df['AnoMes'].unique())
-    origens = ['Todos', 'Interno', 'Externo']
 
     st.sidebar.header("Filtros Globais")
     placa_sel = st.sidebar.selectbox("Placa", placas)
     ano_mes_sel = st.sidebar.selectbox("Mês (AAAA-MM)", anos_meses)
-    origem_sel = st.sidebar.selectbox("Origem do abastecimento", origens)
-    
-    # Filtra o DataFrame conforme filtros
+
     df_filtrado = df.copy()
     if placa_sel != 'Todas':
         df_filtrado = df_filtrado[df_filtrado['Placa'] == placa_sel]
     if ano_mes_sel != 'Todos':
         df_filtrado = df_filtrado[df_filtrado['AnoMes'] == ano_mes_sel]
-    if origem_sel != 'Todos':
-        df_filtrado = df_filtrado[df_filtrado['Origem'] == origem_sel]
 
     # Indicadores gerais
     litros_totais = df_filtrado['Quantidade de litros'].sum()
@@ -85,28 +75,20 @@ def main():
     ])
     autonomia_df = autonomia_df.sort_values(by='Autonomia (km/L)', ascending=False)
 
+    # FORMATAÇÃO para evitar erro no Streamlit:
     autonomia_df["Autonomia (km/L)"] = autonomia_df["Autonomia (km/L)"].apply(
         lambda x: f"{x:.3f}" if pd.notnull(x) else "N/A"
     )
     autonomia_df = autonomia_df.reset_index(drop=True)
 
-    # Indicadores por tipo de combustível
-    st.header("📊 Indicadores por Tipo de Combustível")
-    resumo_combustivel = df_filtrado.groupby('Tipo Combustivel').agg({
-        'Quantidade de litros': 'sum',
-        'Valor Total': 'sum'
-    }).reset_index()
-    resumo_combustivel['Preço Médio (R$/L)'] = resumo_combustivel['Valor Total'] / resumo_combustivel['Quantidade de litros']
-    resumo_combustivel = resumo_combustivel.sort_values('Quantidade de litros', ascending=False)
-
-    # Agrupamentos para gráficos (mesmo filtro aplicado)
+    # Agrupamentos para gráficos
     litros_mes_origem = df_filtrado.groupby(['AnoMes', 'Origem']).agg({'Quantidade de litros': 'sum'}).reset_index()
     preco_mes_origem = df_filtrado.groupby(['AnoMes', 'Origem']).apply(
         lambda x: x['Valor Total'].sum() / x['Quantidade de litros'].sum() if x['Quantidade de litros'].sum() > 0 else 0
     ).reset_index(name='Preco Medio')
 
-    # Abas para organizar a visualização
-    tab1, tab2, tab3, tab4 = st.tabs(["Indicadores Gerais", "Autonomia", "Gráficos", "Por Combustível"])
+    # Organização em abas
+    tab1, tab2, tab3 = st.tabs(["Indicadores Gerais", "Autonomia por Veículo", "Gráficos"])
 
     with tab1:
         st.header("📊 Indicadores Gerais")
@@ -132,15 +114,7 @@ def main():
                        title='Preço Médio Mensal - Interno x Externo')
         st.plotly_chart(fig2, use_container_width=True)
 
-    with tab4:
-        st.header("📊 Consumo e Custos por Tipo de Combustível")
-        st.dataframe(resumo_combustivel.style.format({
-            'Quantidade de litros': '{:,.2f}',
-            'Valor Total': 'R$ {:,.2f}',
-            'Preço Médio (R$/L)': 'R$ {:,.3f}'
-        }).hide_index())
-
-    # Sugestões extras
+    # O que mais pode ser feito:
     st.sidebar.markdown("---")
     st.sidebar.header("O que mais posso fazer?")
     st.sidebar.markdown("""
