@@ -1,129 +1,121 @@
-import pandas as pd
 import streamlit as st
-import plotly.express as px
+import pandas as pd
 
-st.set_page_config(page_title="BI Abastecimento Completo", layout="wide")
-st.title("⛽ BI Abastecimento - Preço e Consumo Mês a Mês")
-
-@st.cache_data
-def load_data(file_path):
-    interno = pd.read_excel(file_path, sheet_name='Abastecimento Interno')
-    externo = pd.read_excel(file_path, sheet_name='Abastecimento Externo')
-
-    interno.columns = interno.columns.str.strip().str.lower().str.replace(' ', '_')
-    externo.columns = externo.columns.str.strip().str.lower().str.replace(' ', '_')
-
-    interno['data'] = pd.to_datetime(interno['data'], errors='coerce')
-    externo['data'] = pd.to_datetime(externo['data'], errors='coerce')
-
-    interno.dropna(subset=['data'], inplace=True)
-    externo.dropna(subset=['data'], inplace=True)
-
-    return interno, externo
-
-def preprocess_interno(df):
-    # Converte colunas importantes
-    df['quantidade_de_litros'] = df['quantidade_de_litros'].astype(str).str.replace(',', '.', regex=False)
-    df['valor_unitario'] = df['valor_unitario'].astype(str).str.replace(',', '.', regex=False).str.replace('r$', '', case=False).str.strip()
-    df['valor_unitario'] = pd.to_numeric(df['valor_unitario'], errors='coerce')
-    df['quantidade_de_litros'] = pd.to_numeric(df['quantidade_de_litros'], errors='coerce')
-
-    # Filtra dados válidos
-    df = df.dropna(subset=['quantidade_de_litros', 'valor_unitario'])
-
-    # Cria coluna mês-ano para agrupamento
-    df['mes_ano'] = df['data'].dt.to_period('M').dt.to_timestamp()
-
-    return df
-
-def preprocess_externo(df):
-    # Colunas já no formato esperado: 'quantidade_de_litros', 'valor_unitario'
-    df['quantidade_de_litros'] = df['quantidade_de_litros'].astype(str).str.replace(',', '.', regex=False)
-    df['valor_unitario'] = df['valor_unitario'].astype(str).str.replace(',', '.', regex=False).str.replace('r$', '', case=False).str.strip()
-    df['valor_unitario'] = pd.to_numeric(df['valor_unitario'], errors='coerce')
-    df['quantidade_de_litros'] = pd.to_numeric(df['quantidade_de_litros'], errors='coerce')
-
-    df = df.dropna(subset=['quantidade_de_litros', 'valor_unitario'])
-    df['mes_ano'] = df['data'].dt.to_period('M').dt.to_timestamp()
-
-    return df
-
-uploaded_file = st.file_uploader("📁 Carregue sua planilha Excel com abas: Abastecimento Interno e Abastecimento Externo", type=['xlsx'])
-if uploaded_file:
-    interno, externo = load_data(uploaded_file)
-
-    interno = preprocess_interno(interno)
-    externo = preprocess_externo(externo)
-
-    st.sidebar.header("Filtros")
-
-    placas = sorted(set(interno['placa'].dropna().unique()) | set(externo['placa'].dropna().unique()))
-    placas_selected = st.sidebar.multiselect("Placas", placas, default=placas)
-
-    combust_interno = interno['tipo'].dropna().unique() if 'tipo' in interno.columns else []
-    combust_externo = externo['descrição_despesa'].dropna().unique() if 'descrição_despesa' in externo.columns else []
-    combust_unificado = sorted(set(combust_interno) | set(combust_externo))
-    combust_selected = st.sidebar.multiselect("Tipo Combustível", combust_unificado, default=combust_unificado)
-
-    data_min = min(interno['data'].min(), externo['data'].min())
-    data_max = max(interno['data'].max(), externo['data'].max())
-    periodo = st.sidebar.date_input("Período", [data_min, data_max])
-
-    start_date, end_date = pd.to_datetime(periodo[0]), pd.to_datetime(periodo[1])
-
-    interno_filt = interno[
-        (interno['placa'].isin(placas_selected)) &
-        (interno['data'] >= start_date) & (interno['data'] <= end_date) &
-        (interno['tipo'].isin(combust_selected))
-    ]
-
-    externo_filt = externo[
-        (externo['placa'].isin(placas_selected)) &
-        (externo['data'] >= start_date) & (externo['data'] <= end_date) &
-        (externo['descrição_despesa'].isin(combust_selected))
-    ]
-
-    # Indicadores por mês e placa - Interno
-    resumo_interno = interno_filt.groupby(['mes_ano', 'placa']).agg(
-        total_litros=('quantidade_de_litros', 'sum'),
-        preco_medio=('valor_unitario', 'mean'),
-        custo_total=('valor_unitario', lambda x: (x * interno_filt.loc[x.index, 'quantidade_de_litros']).sum())
+# Função para processar dados de abastecimento interno
+def processa_abastecimento_interno(df):
+    # Converter coluna 'Data' para datetime
+    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
+    df = df.dropna(subset=['Data'])  # remover linhas com data inválida
+    
+    # Extrair ano e mês para agrupamento
+    df['AnoMes'] = df['Data'].dt.to_period('M')
+    
+    # Converter 'Quantidade de litros' para numérico
+    df['Quantidade de litros'] = pd.to_numeric(df['Quantidade de litros'], errors='coerce')
+    df['Valor Unitario'] = pd.to_numeric(df['Valor Unitario'], errors='coerce')
+    df['Valor Total'] = pd.to_numeric(df['Valor Total'], errors='coerce')
+    
+    # Filtrar só abastecimento do tipo 'Entrada' se existir, ou considerar tudo (ajuste aqui conforme necessidade)
+    # Aqui como a planilha tem 'Tipo' Saída, vamos considerar só entradas para valor médio:
+    df_entradas = df[df['Tipo'].str.lower() == 'entrada'] if 'Tipo' in df.columns else df
+    
+    # Agrupar por AnoMes e calcular total litros e valor total pago
+    agrupado = df_entradas.groupby('AnoMes').agg(
+        litros_totais = ('Quantidade de litros', 'sum'),
+        valor_total_pago = ('Valor Total', 'sum')
     ).reset_index()
+    
+    # Calcular preço médio por litro (tratando divisão por zero)
+    agrupado['preco_medio_litro'] = agrupado.apply(
+        lambda row: row['valor_total_pago'] / row['litros_totais'] if row['litros_totais'] > 0 else 0, axis=1)
+    
+    # Ordenar em ordem decrescente de AnoMes
+    agrupado = agrupado.sort_values(by='AnoMes', ascending=False)
+    
+    return agrupado
 
-    # Indicadores por mês e placa - Externo
-    resumo_externo = externo_filt.groupby(['mes_ano', 'placa']).agg(
-        total_litros=('quantidade_de_litros', 'sum'),
-        preco_medio=('valor_unitario', 'mean'),
-        custo_total=('valor_unitario', lambda x: (x * externo_filt.loc[x.index, 'quantidade_de_litros']).sum())
+# Função para processar dados de abastecimento externo
+def processa_abastecimento_externo(df):
+    # Converter coluna 'Data' para datetime
+    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
+    df = df.dropna(subset=['Data'])
+    
+    # Extrair ano e mês
+    df['AnoMes'] = df['Data'].dt.to_period('M')
+    
+    # Ajustar colunas numéricas (ex: Quantidade de litros, Valor Unitario, Valor Total)
+    df['Quantidade de litros'] = pd.to_numeric(df['Quantidade de litros'], errors='coerce')
+    # Remover "R$" e converter Valor Unitario e Valor Total para float
+    df['Valor Unitario'] = df['Valor Unitario'].str.replace(r'R\$\s*', '', regex=True)
+    df['Valor Unitario'] = pd.to_numeric(df['Valor Unitario'], errors='coerce')
+    df['Valor Total'] = df['Valor Total'].str.replace(r'R\$\s*', '', regex=True)
+    df['Valor Total'] = pd.to_numeric(df['Valor Total'], errors='coerce')
+    
+    agrupado = df.groupby('AnoMes').agg(
+        litros_totais = ('Quantidade de litros', 'sum'),
+        valor_total_pago = ('Valor Total', 'sum')
     ).reset_index()
+    
+    agrupado['preco_medio_litro'] = agrupado.apply(
+        lambda row: row['valor_total_pago'] / row['litros_totais'] if row['litros_totais'] > 0 else 0, axis=1)
+    
+    agrupado = agrupado.sort_values(by='AnoMes', ascending=False)
+    
+    return agrupado
 
-    # União para visão geral
-    resumo_geral = pd.concat([
-        resumo_interno.assign(tipo_abastecimento='Interno'),
-        resumo_externo.assign(tipo_abastecimento='Externo')
-    ])
+def main():
+    st.title("Indicadores Mensais de Abastecimento")
+    
+    # Upload dos arquivos Excel (pode adaptar para CSV ou outro formato)
+    st.sidebar.header("Carregar dados")
+    arquivo_interno = st.sidebar.file_uploader("Upload Planilha Abastecimento Interno", type=["xlsx", "xls", "csv"])
+    arquivo_externo = st.sidebar.file_uploader("Upload Planilha Abastecimento Externo", type=["xlsx", "xls", "csv"])
+    
+    if arquivo_interno is not None:
+        if arquivo_interno.name.endswith(('xlsx','xls')):
+            df_interno = pd.read_excel(arquivo_interno)
+        else:
+            df_interno = pd.read_csv(arquivo_interno)
+        st.subheader("Abastecimento Interno")
+        st.dataframe(df_interno.head())
+        df_interno_proc = processa_abastecimento_interno(df_interno)
+        st.subheader("Indicadores Mensais Abastecimento Interno")
+        st.dataframe(df_interno_proc.style.format({
+            'litros_totais': '{:.2f}',
+            'valor_total_pago': 'R$ {:.2f}',
+            'preco_medio_litro': 'R$ {:.3f}'
+        }))
+    
+    if arquivo_externo is not None:
+        if arquivo_externo.name.endswith(('xlsx','xls')):
+            df_externo = pd.read_excel(arquivo_externo)
+        else:
+            df_externo = pd.read_csv(arquivo_externo)
+        st.subheader("Abastecimento Externo")
+        st.dataframe(df_externo.head())
+        df_externo_proc = processa_abastecimento_externo(df_externo)
+        st.subheader("Indicadores Mensais Abastecimento Externo")
+        st.dataframe(df_externo_proc.style.format({
+            'litros_totais': '{:.2f}',
+            'valor_total_pago': 'R$ {:.2f}',
+            'preco_medio_litro': 'R$ {:.3f}'
+        }))
+    
+    if arquivo_interno is not None and arquivo_externo is not None:
+        st.subheader("Indicadores Consolidados")
+        # Merge por AnoMes somando litros e valores
+        df_total = pd.merge(df_interno_proc, df_externo_proc, on='AnoMes', how='outer', suffixes=('_interno', '_externo')).fillna(0)
+        df_total['litros_totais'] = df_total['litros_totais_interno'] + df_total['litros_totais_externo']
+        df_total['valor_total_pago'] = df_total['valor_total_pago_interno'] + df_total['valor_total_pago_externo']
+        df_total['preco_medio_litro'] = df_total.apply(
+            lambda row: row['valor_total_pago'] / row['litros_totais'] if row['litros_totais'] > 0 else 0, axis=1)
+        df_total = df_total[['AnoMes', 'litros_totais', 'valor_total_pago', 'preco_medio_litro']].sort_values('AnoMes', ascending=False)
+        
+        st.dataframe(df_total.style.format({
+            'litros_totais': '{:.2f}',
+            'valor_total_pago': 'R$ {:.2f}',
+            'preco_medio_litro': 'R$ {:.3f}'
+        }))
 
-    # Total mensal geral (todos veículos juntos)
-    resumo_mes = resumo_geral.groupby(['mes_ano', 'tipo_abastecimento']).agg(
-        total_litros=('total_litros', 'sum'),
-        custo_total=('custo_total', 'sum')
-    ).reset_index()
-    resumo_mes['preco_medio'] = resumo_mes['custo_total'] / resumo_mes['total_litros']
-
-    st.header("📅 Preço Médio e Consumo Mensal")
-
-    fig1 = px.line(resumo_mes, x='mes_ano', y='preco_medio', color='tipo_abastecimento',
-                   labels={'mes_ano': 'Mês', 'preco_medio': 'Preço Médio (R$)', 'tipo_abastecimento': 'Tipo'},
-                   title='Preço Médio Mensal por Tipo de Abastecimento')
-    st.plotly_chart(fig1, use_container_width=True)
-
-    fig2 = px.bar(resumo_mes, x='mes_ano', y='total_litros', color='tipo_abastecimento',
-                  labels={'mes_ano': 'Mês', 'total_litros': 'Total Litros', 'tipo_abastecimento': 'Tipo'},
-                  title='Consumo Total de Litros por Mês e Tipo')
-    st.plotly_chart(fig2, use_container_width=True)
-
-    st.header("📊 Detalhado por Veículo e Mês")
-    st.dataframe(resumo_geral.sort_values(['mes_ano', 'placa']), use_container_width=True)
-
-else:
-    st.info("Faça upload da planilha Excel para começar.")
+if __name__ == "__main__":
+    main()
