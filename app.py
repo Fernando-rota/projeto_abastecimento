@@ -17,22 +17,20 @@ def carregar_planilha(arquivo):
 def limpa_monetario(col):
     return pd.to_numeric(col.astype(str).str.replace(r'R\$\s*', '', regex=True).str.replace(',', '.'), errors='coerce')
 
-def prepara_dados_seguro(df):
+def prepara_dados(df):
     # Normaliza colunas
     df.columns = df.columns.str.strip().str.lower()
-    
-    # Mapear colunas conhecidas automaticamente
     col_map = {
-        "valor unitario": "valor_unitario",
-        "valor tot": "valor_total",
-        "km atu": "km_atual",
-        "km atual": "km_atual",
-        "descrição despe": "descricao_despesa",
-        "descrição despesa": "descricao_despesa",
-        "tipo": "tipo",
+        "data": "data",
         "placa": "placa",
+        "codigo despesa": "codigo_despesa",
+        "descrição despesa": "descricao_despesa",
+        "cnpj fornecedor": "cnpj_fornecedor",
         "quantidade de litros": "quantidade_litros",
-        "data": "data"
+        "valor unitario": "valor_unitario",
+        "valor total": "valor_total",
+        "km atual": "km_atual",
+        "tipo": "tipo"
     }
     df = df.rename(columns={c: col_map[c] for c in col_map if c in df.columns})
     
@@ -49,17 +47,19 @@ def prepara_dados_seguro(df):
         if col in df.columns:
             df[col] = limpa_monetario(df[col])
     
-    # Normaliza tipo
+    # Normaliza tipo e placa
     if 'tipo' in df.columns:
         df['tipo'] = df['tipo'].astype(str).str.lower()
+    if 'placa' in df.columns:
+        df['placa'] = df['placa'].replace('-', pd.NA)
     
     return df
 
-def calcula_autonomia_seguro(df):
+def calcula_autonomia(df):
     if not {'km_atual','quantidade_litros','placa'}.issubset(df.columns):
         return pd.DataFrame(columns=['Placa','Autonomia (km/L)'])
-    df_valid = df.dropna(subset=['km_atual','quantidade_litros'])
-    df_valid = df_valid[df_valid['km_atual'] > 0]
+    df_valid = df.dropna(subset=['km_atual','quantidade_litros','placa'])
+    df_valid = df_valid[(df_valid['km_atual']>0) & (df_valid['quantidade_litros']>0)]
     
     resultados = []
     for placa, g in df_valid.groupby('placa'):
@@ -72,10 +72,10 @@ def calcula_autonomia_seguro(df):
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
 
 # ---------------------------
-# Streamlit App
+# App Streamlit
 # ---------------------------
 def main():
-    st.title("🚛 Insights da Frota - Abastecimento (Robusto)")
+    st.title("🚛 Insights da Frota - Abastecimento")
 
     arquivo = st.file_uploader("Faça upload da planilha Excel", type='xlsx')
     if not arquivo:
@@ -87,15 +87,15 @@ def main():
         st.warning("Planilha não contém dados válidos.")
         return
 
-    df = prepara_dados_seguro(df)
+    df = prepara_dados(df)
     if df.empty:
         st.warning("Após limpeza, não há dados válidos.")
         return
 
-    df['AnoMes'] = df['data'].dt.to_period('M').astype(str) if 'data' in df.columns else pd.Series(dtype=str)
+    df['AnoMes'] = df['data'].dt.to_period('M').astype(str)
 
     # ---------------------------
-    # Filtros dinâmicos
+    # Filtros
     # ---------------------------
     placas = ['Todas'] + sorted(df['placa'].dropna().unique()) if 'placa' in df.columns else ['Todas']
     placa_sel = st.sidebar.selectbox("Selecionar Placa", placas)
@@ -106,9 +106,9 @@ def main():
     data_range = st.sidebar.date_input("Selecione o período", [data_min,data_max], min_value=data_min, max_value=data_max)
 
     df_filtro = df.copy()
-    if placa_sel!='Todas' and 'placa' in df_filtro.columns:
+    if placa_sel != 'Todas' and 'placa' in df_filtro.columns:
         df_filtro = df_filtro[df_filtro['placa']==placa_sel]
-    if combustivel_sel!='Todos' and 'descricao_despesa' in df_filtro.columns:
+    if combustivel_sel != 'Todos' and 'descricao_despesa' in df_filtro.columns:
         df_filtro = df_filtro[df_filtro['descricao_despesa']==combustivel_sel]
     if len(data_range)==2:
         dt_ini, dt_fim = pd.to_datetime(data_range[0]), pd.to_datetime(data_range[1])
@@ -138,7 +138,7 @@ def main():
     # Autonomia
     # ---------------------------
     st.subheader("🚙 Autonomia (km/L) por Veículo")
-    autonomia_df = calcula_autonomia_seguro(df_filtro)
+    autonomia_df = calcula_autonomia(df_filtro)
     if not autonomia_df.empty:
         autonomia_df["Autonomia (km/L)"] = autonomia_df["Autonomia (km/L)"].apply(lambda x:f"{x:.3f}" if pd.notnull(x) else "N/A")
         st.dataframe(autonomia_df)
