@@ -73,42 +73,66 @@ def calcula_preco_medio_entrada(df_int):
     return valor_total / litros_totais if litros_totais > 0 else 0
 
 def prepara_consumo(df_int, df_ext):
+    """
+    Prepara o dataframe combinado para indicadores e cálculo de autonomia.
+    Aplica preço médio para saídas internas e mantém externos.
+    """
     preco_entrada = calcula_preco_medio_entrada(df_int)
 
-    # Apenas saídas internas com placa válida
+    # Saídas internas com placa válida
     saidas = df_int[(df_int['tipo'] == 'saída') & (df_int['placa'].notna())].copy()
     saidas['valor_unitario_calc'] = preco_entrada
     saidas['valor_total_calc'] = saidas['quantidade de litros'] * preco_entrada
 
-    # Apenas externos com placa válida
+    # Externos válidos
     df_ext = df_ext[df_ext['placa'].notna()]
 
+    # Combina ambos
     df_comb = pd.concat([
         saidas[['data','placa','quantidade de litros','valor_unitario_calc','valor_total_calc','km atual','origem','descricao_despesa']],
         df_ext[['data','placa','quantidade de litros','valor_unitario','valor_total','km atual','origem','descricao_despesa']]
     ], ignore_index=True)
 
+    # Preenche colunas faltantes
     df_comb['valor_unitario'] = df_comb['valor_unitario'].fillna(df_comb.get('valor_unitario_calc'))
     df_comb['valor_total'] = df_comb['valor_total'].fillna(df_comb.get('valor_total_calc'))
+
+    # Remove entradas inválidas
     df_comb = df_comb.dropna(subset=['placa','quantidade de litros','data'])
-    df_comb['placa'] = df_comb['placa'].astype(str)
+    df_comb['placa'] = df_comb['placa'].astype(str).str.upper().str.strip()
     df_comb['descricao_despesa'] = df_comb['descricao_despesa'].astype(str)
+
+    # Remove placas inválidas e litros zerados
+    df_comb = df_comb[~df_comb['placa'].isin(['CORREÇÃO','-'])]
+    df_comb = df_comb[df_comb['quantidade de litros'] > 0]
+
     return df_comb
 
 def calcula_autonomia(df):
+    """
+    Calcula a autonomia (km/L) por veículo usando as duas abas combinadas.
+    Desconsidera placas 'CORREÇÃO', '-', None e veículos com litros zerados.
+    Consumo médio = (KM máximo - KM mínimo) / total de litros
+    """
+    # Filtra placas inválidas e litros > 0
+    df = df[~df['placa'].isin(['CORREÇÃO', '-', None])]
+    df = df[df['quantidade de litros'] > 0]
+
     resultados = []
     for placa, g in df.groupby('placa'):
-        if pd.isna(placa):
-            continue
         g = g.sort_values('data')
         if len(g) < 2:
             continue
         km_max = g['km atual'].max()
         km_min = g['km atual'].min()
         litros = g['quantidade de litros'].sum()
-        autonomia = (km_max - km_min) / litros if litros > 0 else None
+        if litros <= 0:
+            continue
+        autonomia = (km_max - km_min) / litros
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
+
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
+
 
 # ---------------------------
 # Streamlit App
@@ -131,7 +155,7 @@ def main():
     # ---------------------------
     # Filtros
     # ---------------------------
-    placas = ['Todas'] + sorted(df_comb['placa'].dropna().unique(), key=lambda x: str(x))
+    placas = ['Todas'] + sorted(df_comb['placa'].dropna().unique())
     placa_sel = st.sidebar.selectbox("Selecionar Placa", placas)
 
     combustiveis = ['Todos'] + sorted(df_comb['descricao_despesa'].dropna().unique())
@@ -210,6 +234,7 @@ def main():
                       barmode='group', labels={'AnoMes':'Mês','quantidade de litros':'Litros','origem':'Origem'},
                       title="Abastecimento Interno x Externo Mensal")
     st.plotly_chart(fig_comp, use_container_width=True)
+
 
 if __name__ == "__main__":
     main()
