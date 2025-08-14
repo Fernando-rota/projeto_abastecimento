@@ -28,6 +28,10 @@ def prepara_dados(df_int, df_ext):
     df_int = df_int.rename(columns={"valor total": "valor_total", "valor unitario": "valor_unitario"})
     df_ext = df_ext.rename(columns={"valor total": "valor_total", "valor unitario": "valor_unitario"})
 
+    # Padronizar placas
+    df_int['placa'] = df_int['placa'].astype(str).str.upper().str.strip()
+    df_ext['placa'] = df_ext['placa'].astype(str).str.upper().str.strip()
+
     # Interno
     df_int['data'] = pd.to_datetime(df_int['data'], dayfirst=True, errors='coerce')
     df_int = df_int.dropna(subset=['data'])
