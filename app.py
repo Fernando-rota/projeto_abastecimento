@@ -73,10 +73,7 @@ def calcula_preco_medio_entrada(df_int):
     return valor_total / litros_totais if litros_totais > 0 else 0
 
 def prepara_consumo(df_int, df_ext):
-    """
-    Prepara o dataframe combinado para indicadores e cálculo de autonomia.
-    Aplica preço médio para saídas internas e mantém externos.
-    """
+    """Prepara dataframe combinado com preços e filtros válidos"""
     preco_entrada = calcula_preco_medio_entrada(df_int)
 
     # Saídas internas com placa válida
@@ -109,15 +106,7 @@ def prepara_consumo(df_int, df_ext):
     return df_comb
 
 def calcula_autonomia(df):
-    """
-    Calcula a autonomia (km/L) por veículo usando as duas abas combinadas.
-    Desconsidera placas 'CORREÇÃO', '-', None e veículos com litros zerados.
-    Consumo médio = (KM máximo - KM mínimo) / total de litros
-    """
-    # Filtra placas inválidas e litros > 0
-    df = df[~df['placa'].isin(['CORREÇÃO', '-', None])]
-    df = df[df['quantidade de litros'] > 0]
-
+    """Calcula autonomia km/L por veículo corretamente"""
     resultados = []
     for placa, g in df.groupby('placa'):
         g = g.sort_values('data')
@@ -130,9 +119,7 @@ def calcula_autonomia(df):
             continue
         autonomia = (km_max - km_min) / litros
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
-
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
-
 
 # ---------------------------
 # Streamlit App
