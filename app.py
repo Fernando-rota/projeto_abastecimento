@@ -17,7 +17,15 @@ def carregar_planilha(arquivo):
 
 def limpa_monetario(col):
     """Remove R$, substitui vírgula por ponto e converte para float"""
-    return pd.to_numeric(col.astype(str).str.replace(r'R\$\s*', '', regex=True).str.replace(',', '.'), errors='coerce')
+    return pd.to_numeric(col.astype(str)
+                         .str.replace(r'R\$\s*', '', regex=True)
+                         .str.replace(',', '.'), errors='coerce')
+
+def padroniza_placa(serie):
+    """Padroniza formato da placa e remove inválidas"""
+    s = serie.astype(str).str.upper().str.strip()
+    s = s.replace(['-', 'NONE', 'NAN', 'NULL', ''], pd.NA)
+    return s
 
 def prepara_dados(df_int, df_ext):
     # Padronizar colunas
@@ -35,7 +43,7 @@ def prepara_dados(df_int, df_ext):
     df_int['km atual'] = pd.to_numeric(df_int['km atual'], errors='coerce')
     df_int['valor_unitario'] = limpa_monetario(df_int.get('valor_unitario', pd.Series()))
     df_int['valor_total'] = pd.to_numeric(df_int.get('valor_total', pd.Series()), errors='coerce')
-    df_int['placa'] = df_int['placa'].astype(str)
+    df_int['placa'] = padroniza_placa(df_int['placa'])
     df_int['descricao_despesa'] = df_int.get('descrição despesa', pd.Series()).astype(str)
     df_int['origem'] = 'Interno'
     df_int['tipo'] = df_int['tipo'].str.lower()
@@ -47,7 +55,7 @@ def prepara_dados(df_int, df_ext):
     df_ext['km atual'] = pd.to_numeric(df_ext['km atual'], errors='coerce')
     df_ext['valor_unitario'] = limpa_monetario(df_ext.get('valor_unitario', pd.Series()))
     df_ext['valor_total'] = limpa_monetario(df_ext.get('valor_total', pd.Series()))
-    df_ext['placa'] = df_ext['placa'].astype(str)
+    df_ext['placa'] = padroniza_placa(df_ext['placa'])
     df_ext['descricao_despesa'] = df_ext.get('descrição despesa', pd.Series()).astype(str)
     df_ext['origem'] = 'Externo'
     df_ext['tipo'] = 'externo'
@@ -55,8 +63,8 @@ def prepara_dados(df_int, df_ext):
     return df_int, df_ext
 
 def calcula_preco_medio_entrada(df_int):
-    """Preço médio do combustível comprado internamente (placa vazia ou '-')"""
-    entradas = df_int[(df_int['tipo'] == 'entrada') & (df_int['placa'].isin(['-', 'None', 'nan', '']))]
+    """Preço médio do combustível comprado internamente (placa inválida)"""
+    entradas = df_int[(df_int['tipo'] == 'entrada') & (df_int['placa'].isna())]
     entradas = entradas.dropna(subset=['valor_unitario','quantidade de litros'])
     if entradas.empty:
         return 0
@@ -66,10 +74,14 @@ def calcula_preco_medio_entrada(df_int):
 
 def prepara_consumo(df_int, df_ext):
     preco_entrada = calcula_preco_medio_entrada(df_int)
-    # Considerar apenas saídas para abastecimento interno
-    saidas = df_int[df_int['tipo'] == 'saída'].copy()
+
+    # Apenas saídas internas com placa válida
+    saidas = df_int[(df_int['tipo'] == 'saída') & (df_int['placa'].notna())].copy()
     saidas['valor_unitario_calc'] = preco_entrada
     saidas['valor_total_calc'] = saidas['quantidade de litros'] * preco_entrada
+
+    # Apenas externos com placa válida
+    df_ext = df_ext[df_ext['placa'].notna()]
 
     df_comb = pd.concat([
         saidas[['data','placa','quantidade de litros','valor_unitario_calc','valor_total_calc','km atual','origem','descricao_despesa']],
@@ -86,10 +98,15 @@ def prepara_consumo(df_int, df_ext):
 def calcula_autonomia(df):
     resultados = []
     for placa, g in df.groupby('placa'):
+        if pd.isna(placa):
+            continue
+        g = g.sort_values('data')
+        if len(g) < 2:
+            continue
         km_max = g['km atual'].max()
         km_min = g['km atual'].min()
         litros = g['quantidade de litros'].sum()
-        autonomia = (km_max - km_min) / litros if litros > 0 and pd.notnull(km_max) and pd.notnull(km_min) else None
+        autonomia = (km_max - km_min) / litros if litros > 0 else None
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
 
@@ -114,7 +131,7 @@ def main():
     # ---------------------------
     # Filtros
     # ---------------------------
-    placas = ['Todas'] + sorted(df_comb['placa'].dropna().unique())
+    placas = ['Todas'] + sorted(df_comb['placa'].dropna().unique(), key=lambda x: str(x))
     placa_sel = st.sidebar.selectbox("Selecionar Placa", placas)
 
     combustiveis = ['Todos'] + sorted(df_comb['descricao_despesa'].dropna().unique())
