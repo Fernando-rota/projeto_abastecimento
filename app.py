@@ -118,6 +118,7 @@ def main():
     st.subheader("📊 Métricas Gerais")
     for comb in df_filtro['descricao_despesa'].dropna().unique():
         df_combustivel = df_filtro[df_filtro['descricao_despesa'] == comb].dropna(subset=['quantidade de litros','valor_total'])
+        df_combustivel = df_combustivel.sort_values('quantidade de litros', ascending=False)  # ordem decrescente
         litros_totais = df_combustivel['quantidade de litros'].sum()
         valor_total = df_combustivel['valor_total'].sum()
         preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
@@ -133,6 +134,7 @@ def main():
     st.subheader("🚙 Autonomia (km/L) por Veículo")
     autonomia_df = calcula_autonomia(df_filtro)
     autonomia_df["Autonomia (km/L)"] = autonomia_df["Autonomia (km/L)"].apply(lambda x: float(f"{x:.3f}") if pd.notnull(x) else None)
+    autonomia_df = autonomia_df.sort_values('Autonomia (km/L)', ascending=False)  # ordem decrescente
     st.dataframe(autonomia_df, use_container_width=True)
 
     # Gráfico de barras
@@ -148,6 +150,7 @@ def main():
     # ---------------------------
     st.subheader("⛽ Evolução Mensal de Litros por Combustível")
     litros_mes = df_filtro.groupby(['AnoMes','descricao_despesa'])['quantidade de litros'].sum().reset_index()
+    litros_mes = litros_mes.sort_values('quantidade de litros', ascending=False)
     fig_litros = px.bar(litros_mes, x='AnoMes', y='quantidade de litros', color='descricao_despesa',
                         barmode='group', labels={'AnoMes':'Mês','quantidade de litros':'Litros'},
                         title="Litros Mensais por Combustível")
@@ -159,7 +162,9 @@ def main():
     st.subheader("💲 Evolução Mensal do Preço Médio por Litro")
     preco_mes = df_filtro.dropna(subset=['quantidade de litros','valor_total']).groupby(['AnoMes','descricao_despesa']).apply(
         lambda x: x['valor_total'].sum()/x['quantidade de litros'].sum() if x['quantidade de litros'].sum()>0 else 0
-    ).reset_index(name='Preço Médio')
+    ).reset_index()
+    preco_mes = preco_mes.rename(columns={0:'Preço Médio'})
+    preco_mes = preco_mes.sort_values('Preço Médio', ascending=False)
     fig_preco = px.line(preco_mes, x='AnoMes', y='Preço Médio', color='descricao_despesa', markers=True,
                         labels={'AnoMes':'Mês','Preço Médio':'R$ / Litro'},
                         title="Preço Médio Mensal por Combustível")
@@ -170,6 +175,7 @@ def main():
     # ---------------------------
     st.subheader("📊 Comparativo Mensal Interno x Externo (Litros)")
     comparativo = df_filtro.groupby(['AnoMes','origem'])['quantidade de litros'].sum().reset_index()
+    comparativo = comparativo.sort_values('quantidade de litros', ascending=False)
     fig_comp = px.bar(comparativo, x='AnoMes', y='quantidade de litros', color='origem',
                       barmode='group', labels={'AnoMes':'Mês','quantidade de litros':'Litros','origem':'Origem'},
                       title="Abastecimento Interno x Externo Mensal")
