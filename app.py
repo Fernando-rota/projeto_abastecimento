@@ -92,13 +92,13 @@ if arquivo:
             for comb in df_filtro[mapa_colunas["descricao"]].dropna().unique():
                 df_combustivel = df_filtro[df_filtro[mapa_colunas["descricao"]] == comb].copy()
 
-                # Filtrar linhas válidas
-                df_combustivel = df_combustivel.dropna(subset=[mapa_colunas["litros"], mapa_colunas["valor_total"], mapa_colunas["placa"]])
-                df_combustivel = df_combustivel[df_combustivel[mapa_colunas["litros"]] > 0]
-                df_combustivel = df_combustivel[~df_combustivel[mapa_colunas["placa"]].isin(["-", "None", "NAN", "NULL", ""])]
+                # Filtrar linhas válidas para cálculo do preço médio
+                df_validas = df_combustivel.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"], mapa_colunas["placa"]])
+                df_validas = df_validas[df_validas[mapa_colunas["valor_total"]] > 0]
+                df_validas = df_validas[df_validas[mapa_colunas["placa"]].str.upper().isin([p for p in df_validas[mapa_colunas["placa"]].unique() if p not in ["-", "NONE", "NAN", "NULL", ""]])]
 
-                litros_totais = df_combustivel[mapa_colunas["litros"]].sum()
-                valor_total = df_combustivel[mapa_colunas["valor_total"]].sum()
+                litros_totais = df_validas[mapa_colunas["litros"]].sum()
+                valor_total = df_validas[mapa_colunas["valor_total"]].sum()
                 preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
 
                 st.markdown(f"**{comb}**")
@@ -112,7 +112,6 @@ if arquivo:
         # ---------------------------
         with abas[1]:
             st.subheader("📈 Consumo por Veículo (dados prontos)")
-
             colunas_esperadas = ['PLACA', 'TOTAL LITROS', 'KM RODADO', 'AUTONOMIA']
             if not all(col in df_consumo.columns for col in colunas_esperadas):
                 st.error(f"A aba 'Consumo' no Excel precisa conter as colunas: {', '.join(colunas_esperadas)}")
@@ -136,10 +135,14 @@ if arquivo:
         # Aba 4 - Preço Médio Mensal
         # ---------------------------
         with abas[3]:
-            preco_mes = df_filtro.dropna(subset=[mapa_colunas["litros"], mapa_colunas["valor_total"]]).groupby(
-                ['AnoMes', mapa_colunas["descricao"]]
-            ).apply(lambda x: x[mapa_colunas["valor_total"]].sum() / x[mapa_colunas["litros"]].sum()
-                    if x[mapa_colunas["litros"]].sum() > 0 else 0).reset_index().rename(columns={0: 'Preço Médio'})
+            df_validas = df_filtro.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"]])
+            df_validas = df_validas[df_validas[mapa_colunas["valor_total"]] > 0]
+
+            preco_mes = df_validas.groupby(['AnoMes', mapa_colunas["descricao"]]).apply(
+                lambda x: x[mapa_colunas["valor_total"]].sum() / x[mapa_colunas["litros"]].sum()
+                if x[mapa_colunas["litros"]].sum() > 0 else 0
+            ).reset_index().rename(columns={0: 'Preço Médio'})
+
             fig_preco = px.line(preco_mes, x='AnoMes', y='Preço Médio', color=mapa_colunas["descricao"], markers=True,
                                 labels={'AnoMes': 'Mês', 'Preço Médio': 'R$ / Litro'},
                                 title="Preço Médio Mensal por Combustível")
