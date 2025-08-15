@@ -80,7 +80,6 @@ if arquivo:
         # Criar abas
         abas = st.tabs([
             "📊 Métricas Gerais",
-            "🚙 Autonomia",
             "📈 Consumo",
             "⛽ Evolução Mensal",
             "💲 Preço Médio Mensal",
@@ -102,27 +101,8 @@ if arquivo:
                 col2.metric("Valor Total Gasto", f"R$ {valor_total:,.2f}")
                 col3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f}")
 
-        # Aba 2 - Autonomia
+        # Aba 2 - Consumo
         with abas[1]:
-            st.subheader("Autonomia (km/L) por Veículo")
-            autonomia_df = (
-                df_filtro
-                .dropna(subset=[mapa_colunas["placa"], mapa_colunas["km"], mapa_colunas["litros"]])
-                .groupby(mapa_colunas["placa"])
-                .apply(lambda g: pd.Series({
-                    'Autonomia (km/L)': (g[mapa_colunas["km"]].max() - g[mapa_colunas["km"]].min()) /
-                                        g[mapa_colunas["litros"]].sum()
-                    if g[mapa_colunas["litros"]].sum() > 0 else None
-                }))
-                .reset_index()
-            )
-            autonomia_df["Autonomia (km/L)"] = autonomia_df["Autonomia (km/L)"].apply(
-                lambda x: f"{x:.3f}" if pd.notnull(x) else "N/A"
-            )
-            st.dataframe(autonomia_df)
-
-        # Aba 3 - Consumo
-        with abas[2]:
             st.subheader("📈 Consumo por Veículo (dados prontos)")
             colunas_esperadas = ['PLACA', 'TOTAL LITROS', 'KM RODADO', 'AUTONOMIA']
             if not all(col in df_consumo.columns for col in colunas_esperadas):
@@ -133,16 +113,16 @@ if arquivo:
                 )
                 st.dataframe(df_consumo)
 
-        # Aba 4 - Evolução Mensal
-        with abas[3]:
+        # Aba 3 - Evolução Mensal
+        with abas[2]:
             litros_mes = df_filtro.groupby(['AnoMes', mapa_colunas["descricao"]])[mapa_colunas["litros"]].sum().reset_index()
             fig_litros = px.bar(litros_mes, x='AnoMes', y=mapa_colunas["litros"], color=mapa_colunas["descricao"],
                                 barmode='group', labels={'AnoMes': 'Mês', mapa_colunas["litros"]: 'Litros'},
                                 title="Litros Mensais por Combustível")
             st.plotly_chart(fig_litros, use_container_width=True)
 
-        # Aba 5 - Preço Médio Mensal
-        with abas[4]:
+        # Aba 4 - Preço Médio Mensal
+        with abas[3]:
             preco_mes = df_filtro.dropna(subset=[mapa_colunas["litros"], mapa_colunas["valor_total"]]).groupby(
                 ['AnoMes', mapa_colunas["descricao"]]
             ).apply(lambda x: x[mapa_colunas["valor_total"]].sum() / x[mapa_colunas["litros"]].sum()
@@ -152,8 +132,8 @@ if arquivo:
                                 title="Preço Médio Mensal por Combustível")
             st.plotly_chart(fig_preco, use_container_width=True)
 
-        # Aba 6 - Comparativo Interno x Externo
-        with abas[5]:
+        # Aba 5 - Comparativo Interno x Externo
+        with abas[4]:
             comparativo = df_filtro.groupby(['AnoMes', 'origem'])[mapa_colunas["litros"]].sum().reset_index()
             fig_comp = px.bar(comparativo, x='AnoMes', y=mapa_colunas["litros"], color='origem',
                               barmode='group', labels={'AnoMes': 'Mês', mapa_colunas["litros"]: 'Litros', 'origem': 'Origem'},
