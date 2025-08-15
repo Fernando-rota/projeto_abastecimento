@@ -34,9 +34,19 @@ if arquivo:
         df_externo["origem"] = "Externo"
         df_filtro = pd.concat([df_interno, df_externo], ignore_index=True)
 
-        # Criar coluna AnoMes
-        df_filtro['data'] = pd.to_datetime(df_filtro['data'], errors='coerce')
-        df_filtro['AnoMes'] = df_filtro['data'].dt.to_period('M').astype(str)
+        # Detectar automaticamente a coluna de data
+        coluna_data = None
+        for nome_col in df_filtro.columns:
+            if "data" in nome_col.lower():
+                coluna_data = nome_col
+                break
+
+        if coluna_data:
+            df_filtro[coluna_data] = pd.to_datetime(df_filtro[coluna_data], errors='coerce')
+            df_filtro['AnoMes'] = df_filtro[coluna_data].dt.to_period('M').astype(str)
+        else:
+            st.error("❌ Nenhuma coluna de data encontrada nas abas de abastecimento.")
+            st.stop()
 
         # Criar abas
         abas = st.tabs([
