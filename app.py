@@ -7,7 +7,6 @@ import unicodedata
 # Funções auxiliares
 # ---------------------------
 def normalizar_nome(nome):
-    """Remove acentos, deixa minúsculo e tira espaços extras."""
     if not isinstance(nome, str):
         return ""
     nome = unicodedata.normalize('NFKD', nome)
@@ -15,7 +14,6 @@ def normalizar_nome(nome):
     return nome.strip().lower()
 
 def mapear_colunas(df, nomes_esperados):
-    """Mapeia nomes esperados para os reais no dataframe."""
     mapa = {}
     colunas_norm = {normalizar_nome(c): c for c in df.columns}
     for chave, lista_opcoes in nomes_esperados.items():
@@ -95,7 +93,8 @@ if arquivo:
                 # Filtrar linhas válidas para cálculo do preço médio
                 df_validas = df_combustivel.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"], mapa_colunas["placa"]])
                 df_validas = df_validas[df_validas[mapa_colunas["valor_total"]] > 0]
-                df_validas = df_validas[df_validas[mapa_colunas["placa"]].str.upper().isin([p for p in df_validas[mapa_colunas["placa"]].unique() if p not in ["-", "NONE", "NAN", "NULL", ""]])]
+                df_validas = df_validas[df_validas[mapa_colunas["placa"]].str.upper().isin(
+                    [p for p in df_validas[mapa_colunas["placa"]].unique() if p not in ["-", "NONE", "NAN", "NULL", ""]])]
 
                 litros_totais = df_validas[mapa_colunas["litros"]].sum()
                 valor_total = df_validas[mapa_colunas["valor_total"]].sum()
@@ -130,6 +129,8 @@ if arquivo:
                                 barmode='group', labels={'AnoMes': 'Mês', mapa_colunas["litros"]: 'Litros'},
                                 title="Litros Mensais por Combustível")
             st.plotly_chart(fig_litros, use_container_width=True)
+            st.markdown("**📋 Tabela de Litros Mensais por Combustível**")
+            st.dataframe(litros_mes)
 
         # ---------------------------
         # Aba 4 - Preço Médio Mensal
@@ -147,6 +148,8 @@ if arquivo:
                                 labels={'AnoMes': 'Mês', 'Preço Médio': 'R$ / Litro'},
                                 title="Preço Médio Mensal por Combustível")
             st.plotly_chart(fig_preco, use_container_width=True)
+            st.markdown("**📋 Tabela de Preço Médio Mensal por Combustível**")
+            st.dataframe(preco_mes)
 
         # ---------------------------
         # Aba 5 - Comparativo Interno x Externo
