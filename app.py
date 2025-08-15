@@ -84,35 +84,22 @@ def prepara_consumo(df_int, df_ext):
     return df_comb
 
 def calcula_autonomia(df):
-    """
-    Calcula a autonomia por placa e combustível:
-    Para cada grupo placa + combustível, pega km_max - km_min
-    e divide pela soma dos litros correspondentes.
-    """
     resultados = []
-    # Se não houver coluna 'descrição despesa', usar valor fixo
-    if 'descrição despesa' not in df.columns:
-        df['descrição despesa'] = 'Desconhecido'
-
-    for (placa, combustivel), g in df.groupby(['placa', 'descrição despesa']):
+    for placa, g in df.groupby('placa'):
         g = g.dropna(subset=['km atual','quantidade de litros'])
-        g = g[g['quantidade de litros'] > 0]
-        if g.empty:
+        g = g[g['quantidade de litros'] > 0].sort_values('data')
+        if len(g) < 2:
             continue
-        km_min = g['km atual'].min()
-        km_max = g['km atual'].max()
-        total_litros = g['quantidade de litros'].sum()
-        if total_litros == 0:
+        km_diff = g['km atual'].diff().iloc[1:]  # diferença entre kms consecutivos
+        litros = g['quantidade de litros'].iloc[1:]  # litros correspondentes ao intervalo
+        km_diff = km_diff[km_diff > 0]
+        litros = litros.loc[km_diff.index]
+        if litros.sum() == 0:
             autonomia = None
         else:
-            autonomia = (km_max - km_min) / total_litros
-        resultados.append({
-            'Placa': placa,
-            'Combustível': combustivel,
-            'Autonomia (km/L)': autonomia
-        })
+            autonomia = km_diff.sum() / litros.sum()
+        resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
-
 
 # ---------------------------
 # Streamlit App
@@ -178,7 +165,7 @@ def main():
     # ---------------------------
     # Aba Autonomia
     # ---------------------------
-    st.subheader("🚙 Autonomia (km/L) por Veículo e Combustível")
+    st.subheader("🚙 Autonomia (km/L) por Veículo")
     autonomia_df = calcula_autonomia(df_filtro)
     autonomia_df["Autonomia (km/L)"] = autonomia_df["Autonomia (km/L)"].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "N/A")
     st.dataframe(autonomia_df)
