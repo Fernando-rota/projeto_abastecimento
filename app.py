@@ -86,34 +86,53 @@ if arquivo:
             "📊 Comparativo Interno x Externo"
         ])
 
+        # ---------------------------
         # Aba 1 - Métricas Gerais
+        # ---------------------------
         with abas[0]:
             for comb in df_filtro[mapa_colunas["descricao"]].dropna().unique():
-                df_combustivel = df_filtro[df_filtro[mapa_colunas["descricao"]] == comb].dropna(
-                    subset=[mapa_colunas["litros"], mapa_colunas["valor_total"]]
-                )
+                df_combustivel = df_filtro[df_filtro[mapa_colunas["descricao"]] == comb].copy()
+                # Considerar apenas linhas com litros > 0 e valor_total não nulo
+                df_combustivel = df_combustivel.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"]])
+                df_combustivel = df_combustivel[df_combustivel[mapa_colunas["litros"]] > 0]
+
                 litros_totais = df_combustivel[mapa_colunas["litros"]].sum()
                 valor_total = df_combustivel[mapa_colunas["valor_total"]].sum()
                 preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
+
                 st.markdown(f"**{comb}**")
                 col1, col2, col3 = st.columns(3)
                 col1.metric("Litros Totais", f"{litros_totais:,.2f} L")
                 col2.metric("Valor Total Gasto", f"R$ {valor_total:,.2f}")
                 col3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f}")
 
+        # ---------------------------
         # Aba 2 - Consumo
+        # ---------------------------
         with abas[1]:
             st.subheader("📈 Consumo por Veículo (dados prontos)")
+
             colunas_esperadas = ['PLACA', 'TOTAL LITROS', 'KM RODADO', 'AUTONOMIA']
             if not all(col in df_consumo.columns for col in colunas_esperadas):
                 st.error(f"A aba 'Consumo' no Excel precisa conter as colunas: {', '.join(colunas_esperadas)}")
             else:
-                df_consumo['AUTONOMIA'] = df_consumo['AUTONOMIA'].apply(
-                    lambda x: f"{float(x):.3f}" if pd.notnull(x) else "N/A"
-                )
+                # Ordenar por AUTONOMIA crescente
+                df_consumo['AUTONOMIA'] = pd.to_numeric(df_consumo['AUTONOMIA'], errors='coerce')
+                df_consumo = df_consumo.sort_values('AUTONOMIA', ascending=True)
+
+                # Gráfico de barras
+                fig_autonomia = px.bar(df_consumo, x='PLACA', y='AUTONOMIA', text='AUTONOMIA',
+                                       labels={'PLACA':'Placa', 'AUTONOMIA':'Autonomia (km/L)'},
+                                       title="Autonomia por Veículo")
+                st.plotly_chart(fig_autonomia, use_container_width=True)
+
+                # Formatar autonomia com 3 casas decimais na tabela
+                df_consumo['AUTONOMIA'] = df_consumo['AUTONOMIA'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "N/A")
                 st.dataframe(df_consumo)
 
+        # ---------------------------
         # Aba 3 - Evolução Mensal
+        # ---------------------------
         with abas[2]:
             litros_mes = df_filtro.groupby(['AnoMes', mapa_colunas["descricao"]])[mapa_colunas["litros"]].sum().reset_index()
             fig_litros = px.bar(litros_mes, x='AnoMes', y=mapa_colunas["litros"], color=mapa_colunas["descricao"],
@@ -121,7 +140,9 @@ if arquivo:
                                 title="Litros Mensais por Combustível")
             st.plotly_chart(fig_litros, use_container_width=True)
 
+        # ---------------------------
         # Aba 4 - Preço Médio Mensal
+        # ---------------------------
         with abas[3]:
             preco_mes = df_filtro.dropna(subset=[mapa_colunas["litros"], mapa_colunas["valor_total"]]).groupby(
                 ['AnoMes', mapa_colunas["descricao"]]
@@ -132,7 +153,9 @@ if arquivo:
                                 title="Preço Médio Mensal por Combustível")
             st.plotly_chart(fig_preco, use_container_width=True)
 
+        # ---------------------------
         # Aba 5 - Comparativo Interno x Externo
+        # ---------------------------
         with abas[4]:
             comparativo = df_filtro.groupby(['AnoMes', 'origem'])[mapa_colunas["litros"]].sum().reset_index()
             fig_comp = px.bar(comparativo, x='AnoMes', y=mapa_colunas["litros"], color='origem',
