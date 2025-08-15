@@ -24,9 +24,20 @@ def prepara_dados(df_int, df_ext):
     df_int.columns = df_int.columns.str.strip().str.lower()
     df_ext.columns = df_ext.columns.str.strip().str.lower()
     
-    # Renomear colunas importantes
-    df_int = df_int.rename(columns={"valor total": "valor_total", "valor unitario": "valor_unitario", "descricao despesa":"descricao"})
-    df_ext = df_ext.rename(columns={"valor total": "valor_total", "valor unitario": "valor_unitario", "descricao despesa":"descricao"})
+    # Renomear colunas importantes, somente se existirem
+    if 'valor total' in df_int.columns:
+        df_int = df_int.rename(columns={"valor total": "valor_total"})
+    if 'valor unitario' in df_int.columns:
+        df_int = df_int.rename(columns={"valor unitario": "valor_unitario"})
+    if 'descricao despesa' in df_int.columns and 'descricao' not in df_int.columns:
+        df_int = df_int.rename(columns={"descricao despesa":"descricao"})
+        
+    if 'valor total' in df_ext.columns:
+        df_ext = df_ext.rename(columns={"valor total": "valor_total"})
+    if 'valor unitario' in df_ext.columns:
+        df_ext = df_ext.rename(columns={"valor unitario": "valor_unitario"})
+    if 'descricao despesa' in df_ext.columns and 'descricao' not in df_ext.columns:
+        df_ext = df_ext.rename(columns={"descricao despesa":"descricao"})
 
     # Interno
     df_int['data'] = pd.to_datetime(df_int['data'], dayfirst=True, errors='coerce')
@@ -57,7 +68,12 @@ def prepara_dados(df_int, df_ext):
     return df_int, df_ext
 
 def prepara_consumo(df_int, df_ext):
-    df_comb = pd.concat([df_int, df_ext], ignore_index=True)
+    # Considerar apenas saídas internas com preço calculado
+    df_int_valid = df_int[(df_int['tipo'] == 'saída') & (df_int['valor_unitario'].notna())]
+    df_comb = pd.concat([
+        df_int_valid[['data','placa','quantidade de litros','valor_unitario','valor_total','km atual','origem','descricao']],
+        df_ext[['data','placa','quantidade de litros','valor_unitario','valor_total','km atual','origem','descricao']]
+    ], ignore_index=True)
     df_comb = df_comb.dropna(subset=['placa','quantidade de litros','data'])
     return df_comb
 
@@ -65,10 +81,9 @@ def prepara_consumo(df_int, df_ext):
 # Streamlit App
 # ---------------------------
 def main():
-    st.set_page_config(layout="wide")
     st.title("🚛 Insights da Frota - Abastecimento")
 
-    arquivo = st.file_uploader("Faça upload da planilha Excel com abas: 'Abastecimento Interno', 'Abastecimento Externo' e 'Consumo'", type='xlsx')
+    arquivo = st.file_uploader("Faça upload da planilha Excel com abas 'Abastecimento Interno', 'Abastecimento Externo' e 'Consumo'", type='xlsx')
     if not arquivo:
         st.info("Aguardando upload do arquivo...")
         return
@@ -109,104 +124,66 @@ def main():
     df_filtro['AnoMes'] = df_filtro['data'].dt.to_period('M').astype(str)
 
     # ---------------------------
-    # Mapa de colunas
+    # Aba Métricas Gerais
     # ---------------------------
-    mapa_colunas = {
-        "placa":"placa",
-        "litros":"quantidade de litros",
-        "valor_total":"valor_total",
-        "descricao":"descricao",
-        "km":"km atual"
-    }
+    st.subheader("📊 Métricas Gerais")
+    for comb in df_filtro['descricao'].dropna().unique():
+        df_combustivel = df_filtro[(df_filtro['descricao'] == comb) & (df_filtro['valor_unitario'].notna())]
+        litros_totais = df_combustivel['quantidade de litros'].sum()
+        valor_total = df_combustivel['valor_total'].sum()
+        preco_medio = valor_total / litros_totais if litros_totais > 0 else 0
+
+        st.markdown(f"**{comb}**")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Litros Totais", f"{litros_totais:,.2f} L")
+        col2.metric("Valor Total Gasto", f"R$ {valor_total:,.2f}")
+        col3.metric("Preço Médio/Litro", f"R$ {preco_medio:.2f}")
 
     # ---------------------------
-    # Abas do App
+    # Aba Consumo
     # ---------------------------
-    abas = st.tabs(["Métricas Gerais","Autonomia","Evolução Litros","Preço Médio","Comparativo","Consumo"])
+    st.subheader("🚙 Consumo por Veículo")
+    df_consumo_sorted = df_consumo.sort_values('AUTONOMIA')
+    st.dataframe(df_consumo_sorted.style.format({
+        'TOTAL LITROS':'{:.2f} L',
+        'KM RODADO':'{:.0f} km',
+        'AUTONOMIA':'{:.2f} km/L'
+    }).hide_index())
 
     # ---------------------------
-    # Aba 1 - Métricas Gerais
+    # Evolução mensal litros por combustível
     # ---------------------------
-    with abas[0]:
-        for comb in df_filtro[mapa_colunas["descricao"]].dropna().unique():
-            df_validas = df_filtro[(df_filtro[mapa_colunas["descricao"]]==comb)].dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"]])
-            df_validas = df_validas[df_validas[mapa_colunas["valor_total"]]>0]
-            df_validas = df_validas[df_validas[mapa_colunas["placa"]].notna()]
-            
-            litros_totais = df_validas[mapa_colunas["litros"]].sum()
-            valor_total = df_validas[mapa_colunas["valor_total"]].sum()
-            preco_medio = valor_total / litros_totais if litros_totais>0 else 0
-
-            st.markdown(f"**{comb}**")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Litros Totais", f"{litros_totais:,.2f} L")
-            col2.metric("Valor Total Gasto", f"R$ {valor_total:,.2f}")
-            col3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f}")
+    st.subheader("⛽ Evolução Mensal de Litros por Combustível")
+    litros_mes = df_filtro.groupby(['AnoMes','descricao'])['quantidade de litros'].sum().reset_index()
+    fig_litros = px.bar(litros_mes, x='AnoMes', y='quantidade de litros', color='descricao',
+                        barmode='group', labels={'AnoMes':'Mês','quantidade de litros':'Litros','descricao':'Combustível'},
+                        title="Litros Mensais por Combustível")
+    st.plotly_chart(fig_litros, use_container_width=True)
+    st.dataframe(litros_mes.style.format({'quantidade de litros':'{:.2f} L'}).hide_index())
 
     # ---------------------------
-    # Aba 2 - Autonomia
+    # Evolução mensal preço médio por litro
     # ---------------------------
-    with abas[1]:
-        st.markdown("🚙 Autonomia por Veículo (usando tabela de Consumo)")
-        df_consumo['Litros'] = df_consumo['TOTAL LITROS'].map(lambda x: f"{x:,.2f} L")
-        df_consumo['KM Rodado'] = df_consumo['KM RODADO'].map(lambda x: f"{x:,.0f} km")
-        df_consumo['Autonomia'] = df_consumo['AUTONOMIA'].map(lambda x: f"{x:.2f} km/L")
-        st.dataframe(df_consumo[['PLACA','Litros','KM Rodado','Autonomia']].sort_values('Autonomia'), hide_index=True)
+    st.subheader("💲 Evolução Mensal do Preço Médio por Litro")
+    preco_mes = df_filtro.dropna(subset=['quantidade de litros','valor_total']).groupby(['AnoMes','descricao']).apply(
+        lambda g: g['valor_total'].sum()/g['quantidade de litros'].sum() if g['quantidade de litros'].sum()>0 else 0
+    ).reset_index().rename(columns={0:'Preço Médio'})
+    fig_preco = px.line(preco_mes, x='AnoMes', y='Preço Médio', color='descricao', markers=True,
+                        labels={'AnoMes':'Mês','Preço Médio':'R$ / Litro','descricao':'Combustível'},
+                        title="Preço Médio Mensal por Combustível")
+    st.plotly_chart(fig_preco, use_container_width=True)
+    st.dataframe(preco_mes.style.format({'Preço Médio':'R$ {:.2f}'}).hide_index())
 
     # ---------------------------
-    # Aba 3 - Evolução Litros
+    # Comparativo Interno x Externo
     # ---------------------------
-    with abas[2]:
-        litros_mes = df_filtro.groupby(['AnoMes', mapa_colunas["descricao"]])[mapa_colunas["litros"]].sum().reset_index()
-        litros_mes[mapa_colunas["litros"]] = litros_mes[mapa_colunas["litros"]].round(2)
-        fig_litros = px.bar(litros_mes, x='AnoMes', y=mapa_colunas["litros"], color=mapa_colunas["descricao"],
-                            barmode='group', labels={'AnoMes':'Mês', mapa_colunas["litros"]:'Litros'},
-                            title="Litros Mensais por Combustível")
-        st.plotly_chart(fig_litros, use_container_width=True)
-        litros_mes['Litros'] = litros_mes[mapa_colunas["litros"]].map(lambda x: f"{x:,.2f} L")
-        st.markdown("**📋 Tabela de Litros Mensais por Combustível**")
-        st.dataframe(litros_mes.rename(columns={mapa_colunas["descricao"]:"Combustível"}), hide_index=True)
-
-    # ---------------------------
-    # Aba 4 - Preço Médio
-    # ---------------------------
-    with abas[3]:
-        df_validas = df_filtro.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"]])
-        df_validas = df_validas[df_validas[mapa_colunas["valor_total"]]>0]
-        preco_mes = df_validas.groupby(['AnoMes', mapa_colunas["descricao"]]).apply(
-            lambda x: x[mapa_colunas["valor_total"]].sum()/x[mapa_colunas["litros"]].sum() if x[mapa_colunas["litros"]].sum()>0 else 0
-        ).reset_index().rename(columns={0:'Preço Médio'})
-        preco_mes['Preço Médio'] = preco_mes['Preço Médio'].round(2)
-        fig_preco = px.line(preco_mes, x='AnoMes', y='Preço Médio', color=mapa_colunas["descricao"], markers=True,
-                            labels={'AnoMes':'Mês','Preço Médio':'R$/L'}, title="Preço Médio Mensal por Combustível")
-        st.plotly_chart(fig_preco, use_container_width=True)
-        preco_mes['Preço Médio'] = preco_mes['Preço Médio'].map(lambda x: f"R$ {x:,.2f}")
-        st.markdown("**📋 Tabela de Preço Médio Mensal por Combustível**")
-        st.dataframe(preco_mes.rename(columns={mapa_colunas["descricao"]:"Combustível"}), hide_index=True)
-
-    # ---------------------------
-    # Aba 5 - Comparativo Interno x Externo
-    # ---------------------------
-    with abas[4]:
-        comparativo = df_filtro.groupby(['AnoMes','origem'])[mapa_colunas["litros"]].sum().reset_index()
-        comparativo[mapa_colunas["litros"]] = comparativo[mapa_colunas["litros"]].round(2)
-        fig_comp = px.bar(comparativo, x='AnoMes', y=mapa_colunas["litros"], color='origem',
-                          barmode='group', labels={'AnoMes':'Mês', mapa_colunas["litros"]:'Litros','origem':'Origem'},
-                          title="Abastecimento Interno x Externo Mensal")
-        st.plotly_chart(fig_comp, use_container_width=True)
-        comparativo['Litros'] = comparativo[mapa_colunas["litros"]].map(lambda x: f"{x:,.2f} L")
-        st.markdown("**📋 Tabela Comparativa Interno x Externo**")
-        st.dataframe(comparativo.rename(columns={'origem':'Origem'}), hide_index=True)
-
-    # ---------------------------
-    # Aba 6 - Consumo
-    # ---------------------------
-    with abas[5]:
-        st.markdown("📊 Consumo por Veículo")
-        df_consumo['Litros'] = df_consumo['TOTAL LITROS'].map(lambda x: f"{x:,.2f} L")
-        df_consumo['KM Rodado'] = df_consumo['KM RODADO'].map(lambda x: f"{x:,.0f} km")
-        df_consumo['Autonomia'] = df_consumo['AUTONOMIA'].map(lambda x: f"{x:.2f} km/L")
-        st.dataframe(df_consumo[['PLACA','Litros','KM Rodado','Autonomia']].sort_values('Autonomia'), hide_index=True)
+    st.subheader("📊 Comparativo Mensal Interno x Externo (Litros)")
+    comparativo = df_filtro.groupby(['AnoMes','origem'])['quantidade de litros'].sum().reset_index()
+    fig_comp = px.bar(comparativo, x='AnoMes', y='quantidade de litros', color='origem',
+                      barmode='group', labels={'AnoMes':'Mês','quantidade de litros':'Litros','origem':'Origem'},
+                      title="Abastecimento Interno x Externo Mensal")
+    st.plotly_chart(fig_comp, use_container_width=True)
+    st.dataframe(comparativo.style.format({'quantidade de litros':'{:.2f} L'}).hide_index())
 
 if __name__ == "__main__":
     main()
