@@ -84,36 +84,35 @@ def prepara_consumo(df_int, df_ext):
     return df_comb
 
 def calcula_autonomia(df):
+    """
+    Calcula a autonomia por placa e combustível:
+    Para cada grupo placa + combustível, pega km_max - km_min
+    e divide pela soma dos litros correspondentes.
+    """
     resultados = []
-    
-    # Filtrar placas inválidas e litros nulos/zerados
-    df_validos = df.dropna(subset=['placa','km atual','quantidade de litros'])
-    df_validos = df_validos[df_validos['quantidade de litros'] > 0]
-    df_validos = df_validos[~df_validos['placa'].str.upper().isin(['CORREÇÃO'])]
-    
-    # Agrupar por placa e tipo de combustível
-    for (placa, comb), g in df_validos.groupby(['placa','descrição despesa']):
-        if len(g) < 2:
-            continue  # precisa de pelo menos dois registros para km_max - km_min
-        
-        km_max = g['km atual'].max()
+    # Se não houver coluna 'descrição despesa', usar valor fixo
+    if 'descrição despesa' not in df.columns:
+        df['descrição despesa'] = 'Desconhecido'
+
+    for (placa, combustivel), g in df.groupby(['placa', 'descrição despesa']):
+        g = g.dropna(subset=['km atual','quantidade de litros'])
+        g = g[g['quantidade de litros'] > 0]
+        if g.empty:
+            continue
         km_min = g['km atual'].min()
-        litros_total = g['quantidade de litros'].sum()
-        
-        if litros_total == 0:
+        km_max = g['km atual'].max()
+        total_litros = g['quantidade de litros'].sum()
+        if total_litros == 0:
             autonomia = None
         else:
-            autonomia = (km_max - km_min) / litros_total
-        
+            autonomia = (km_max - km_min) / total_litros
         resultados.append({
             'Placa': placa,
-            'Combustível': comb,
+            'Combustível': combustivel,
             'Autonomia (km/L)': autonomia
         })
-    
-    df_result = pd.DataFrame(resultados)
-    df_result = df_result.sort_values('Autonomia (km/L)', ascending=False)
-    return df_result
+    return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
+
 
 # ---------------------------
 # Streamlit App
