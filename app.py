@@ -37,6 +37,9 @@ def prepara_dados(df_int, df_ext):
     df_int['valor_total'] = pd.to_numeric(df_int.get('valor_total', pd.Series()), errors='coerce')
     df_int['origem'] = 'Interno'
     df_int['tipo'] = df_int['tipo'].str.lower()
+    df_int['placa'] = df_int.get('placa', pd.Series()).astype(str).str.upper().str.strip()
+    df_int['placa'].replace(['-', 'NONE', 'NAN', 'NULL', ''], pd.NA, inplace=True)
+    df_int['descrição despesa'] = df_int.get('descrição despesa', pd.Series()).astype(str)
 
     # Externo
     df_ext['data'] = pd.to_datetime(df_ext['data'], dayfirst=True, errors='coerce')
@@ -47,12 +50,15 @@ def prepara_dados(df_int, df_ext):
     df_ext['valor_total'] = limpa_monetario(df_ext.get('valor_total', pd.Series()))
     df_ext['origem'] = 'Externo'
     df_ext['tipo'] = 'externo'
+    df_ext['placa'] = df_ext.get('placa', pd.Series()).astype(str).str.upper().str.strip()
+    df_ext['placa'].replace(['-', 'NONE', 'NAN', 'NULL', ''], pd.NA, inplace=True)
+    df_ext['descrição despesa'] = df_ext.get('descrição despesa', pd.Series()).astype(str)
 
     return df_int, df_ext
 
 def calcula_preco_medio_entrada(df_int):
     """Calcula preço médio do combustível comprado internamente (placa vazia ou '-')"""
-    entradas = df_int[(df_int['tipo'] == 'entrada') & (df_int['placa'].isin(['-', None, '']) | df_int['placa'].isna())]
+    entradas = df_int[(df_int['tipo'] == 'entrada') & (df_int['placa'].isna())]
     entradas = entradas.dropna(subset=['valor_unitario','quantidade de litros'])
     if entradas.empty:
         return 0
@@ -78,17 +84,20 @@ def prepara_consumo(df_int, df_ext):
     return df_comb
 
 def calcula_autonomia(df):
-    """Autonomia média km/L por placa usando (km_max - km_min) / total litros"""
     resultados = []
     for placa, g in df.groupby('placa'):
         g = g.dropna(subset=['km atual','quantidade de litros'])
-        if g.empty or g['quantidade de litros'].sum() == 0:
+        g = g[g['quantidade de litros'] > 0].sort_values('data')
+        if len(g) < 2:
+            continue
+        km_diff = g['km atual'].diff().iloc[1:]  # diferença entre kms consecutivos
+        litros = g['quantidade de litros'].iloc[1:]  # litros correspondentes ao intervalo
+        km_diff = km_diff[km_diff > 0]
+        litros = litros.loc[km_diff.index]
+        if litros.sum() == 0:
             autonomia = None
         else:
-            km_max = g['km atual'].max()
-            km_min = g['km atual'].min()
-            litros_totais = g['quantidade de litros'].sum()
-            autonomia = (km_max - km_min) / litros_totais
+            autonomia = km_diff.sum() / litros.sum()
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
 
@@ -139,7 +148,7 @@ def main():
     df_filtro['AnoMes'] = df_filtro['data'].dt.to_period('M').astype(str)
 
     # ---------------------------
-    # Métricas Gerais
+    # Aba Métricas Gerais
     # ---------------------------
     st.subheader("📊 Métricas Gerais")
     for comb in df_filtro['descrição despesa'].dropna().unique():
@@ -154,7 +163,7 @@ def main():
         col3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f}")
 
     # ---------------------------
-    # Autonomia
+    # Aba Autonomia
     # ---------------------------
     st.subheader("🚙 Autonomia (km/L) por Veículo")
     autonomia_df = calcula_autonomia(df_filtro)
@@ -162,7 +171,7 @@ def main():
     st.dataframe(autonomia_df)
 
     # ---------------------------
-    # Evolução Mensal Litros
+    # Evolução mensal litros por combustível
     # ---------------------------
     st.subheader("⛽ Evolução Mensal de Litros por Combustível")
     litros_mes = df_filtro.groupby(['AnoMes','descrição despesa'])['quantidade de litros'].sum().reset_index()
@@ -172,12 +181,12 @@ def main():
     st.plotly_chart(fig_litros, use_container_width=True)
 
     # ---------------------------
-    # Evolução Mensal Preço Médio
+    # Evolução mensal preço médio por litro
     # ---------------------------
     st.subheader("💲 Evolução Mensal do Preço Médio por Litro")
     preco_mes = df_filtro.dropna(subset=['quantidade de litros','valor_total']).groupby(['AnoMes','descrição despesa']).apply(
         lambda x: x['valor_total'].sum()/x['quantidade de litros'].sum() if x['quantidade de litros'].sum()>0 else 0
-    ).reset_index(name='Preço Médio')
+    ).reset_index().rename(columns={0:'Preço Médio'})
     fig_preco = px.line(preco_mes, x='AnoMes', y='Preço Médio', color='descrição despesa', markers=True,
                         labels={'AnoMes':'Mês','Preço Médio':'R$ / Litro'},
                         title="Preço Médio Mensal por Combustível")
