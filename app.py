@@ -86,20 +86,16 @@ def prepara_consumo(df_int, df_ext):
 def calcula_autonomia(df):
     resultados = []
     for placa, g in df.groupby('placa'):
-        g = g.dropna(subset=['km atual','quantidade de litros'])
-        g = g[g['quantidade de litros'] > 0].sort_values('data')
-        if len(g) < 2:
-            continue
-        km_diff = g['km atual'].diff().iloc[1:]  # diferença entre kms consecutivos
-        litros = g['quantidade de litros'].iloc[1:]  # litros correspondentes ao intervalo
-        km_diff = km_diff[km_diff > 0]
-        litros = litros.loc[km_diff.index]
-        if litros.sum() == 0:
-            autonomia = None
+        km_max = g['km atual'].max()
+        km_min = g['km atual'].min()
+        litros_total = g['quantidade de litros'].sum()
+        if litros_total > 0 and pd.notnull(km_max) and pd.notnull(km_min):
+            autonomia = (km_max - km_min) / litros_total
         else:
-            autonomia = km_diff.sum() / litros.sum()
+            autonomia = None
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
+
 
 # ---------------------------
 # Streamlit App
