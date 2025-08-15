@@ -42,32 +42,31 @@ def carregar_planilha(arquivo):
 st.set_page_config(page_title="Dashboard Abastecimento", layout="wide")
 st.title("📊 Dashboard de Abastecimento")
 
-# Upload do arquivo
 arquivo = st.file_uploader("Carregar arquivo Excel com Abastecimentos e Consumo", type=['xlsx'])
 
 if arquivo:
     df_interno, df_externo, df_consumo = carregar_planilha(arquivo)
 
     if df_interno is not None and df_externo is not None:
-        # Unir dados abastecimento
+        # Adicionar coluna origem
         df_interno["origem"] = "Interno"
         df_externo["origem"] = "Externo"
+
+        # Concatenar interno + externo
         df_filtro = pd.concat([df_interno, df_externo], ignore_index=True)
 
-        # Mapeamento de nomes de colunas que o script espera
+        # Mapear colunas
         nomes_esperados = {
-            "data": ["data", "data abastecimento", "dt abastecimento"],
-            "descricao": ["descrição despesa", "descricao despesa", "tipo combustível", "tipo combustivel"],
-            "placa": ["placa", "veículo", "veiculo"],
-            "litros": ["quantidade de litros", "litros", "qtd litros"],
-            "valor_total": ["valor_total", "valor total", "valor abastecimento"],
-            "km": ["km atual", "km", "quilometragem"]
+            "data": ["Data", "Carimbo de data/hora"],
+            "descricao": ["Descrição Despesa", "descricao despesa", "Tipo"],
+            "placa": ["Placa", "placa", "Veículo", "veiculo"],
+            "litros": ["Quantidade de litros", "quantidade de litros", "Litros", "litros"],
+            "valor_total": ["Valor Total", "valor total", "valor_total"],
+            "km": ["KM Atual", "km atual", "km"]
         }
-
-        # Detectar colunas no df_filtro
         mapa_colunas = mapear_colunas(df_filtro, nomes_esperados)
 
-        # Verificar se todas as colunas necessárias foram encontradas
+        # Verificar colunas faltantes
         colunas_faltando = [c for c in nomes_esperados if c not in mapa_colunas]
         if colunas_faltando:
             st.error(f"❌ Não foi possível encontrar as colunas: {', '.join(colunas_faltando)}")
@@ -92,9 +91,11 @@ if arquivo:
         with abas[0]:
             for comb in df_filtro[mapa_colunas["descricao"]].dropna().unique():
                 df_combustivel = df_filtro[df_filtro[mapa_colunas["descricao"]] == comb].copy()
-                # Considerar apenas linhas com litros > 0 e valor_total não nulo
-                df_combustivel = df_combustivel.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"]])
+
+                # Filtrar linhas válidas
+                df_combustivel = df_combustivel.dropna(subset=[mapa_colunas["litros"], mapa_colunas["valor_total"], mapa_colunas["placa"]])
                 df_combustivel = df_combustivel[df_combustivel[mapa_colunas["litros"]] > 0]
+                df_combustivel = df_combustivel[~df_combustivel[mapa_colunas["placa"]].isin(["-", "None", "NAN", "NULL", ""])]
 
                 litros_totais = df_combustivel[mapa_colunas["litros"]].sum()
                 valor_total = df_combustivel[mapa_colunas["valor_total"]].sum()
@@ -116,18 +117,9 @@ if arquivo:
             if not all(col in df_consumo.columns for col in colunas_esperadas):
                 st.error(f"A aba 'Consumo' no Excel precisa conter as colunas: {', '.join(colunas_esperadas)}")
             else:
-                # Ordenar por AUTONOMIA crescente
                 df_consumo['AUTONOMIA'] = pd.to_numeric(df_consumo['AUTONOMIA'], errors='coerce')
                 df_consumo = df_consumo.sort_values('AUTONOMIA', ascending=True)
-
-                # Gráfico de barras
-                fig_autonomia = px.bar(df_consumo, x='PLACA', y='AUTONOMIA', text='AUTONOMIA',
-                                       labels={'PLACA':'Placa', 'AUTONOMIA':'Autonomia (km/L)'},
-                                       title="Autonomia por Veículo")
-                st.plotly_chart(fig_autonomia, use_container_width=True)
-
-                # Formatar autonomia com 3 casas decimais na tabela
-                df_consumo['AUTONOMIA'] = df_consumo['AUTONOMIA'].apply(lambda x: f"{x:.3f}" if pd.notnull(x) else "N/A")
+                df_consumo['AUTONOMIA'] = df_consumo['AUTONOMIA'].apply(lambda x: f"{x:.2f}" if pd.notnull(x) else "N/A")
                 st.dataframe(df_consumo)
 
         # ---------------------------
