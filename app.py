@@ -78,12 +78,17 @@ def prepara_consumo(df_int, df_ext):
     return df_comb
 
 def calcula_autonomia(df):
+    """Autonomia média km/L por placa usando (km_max - km_min) / total litros"""
     resultados = []
     for placa, g in df.groupby('placa'):
-        km_max = g['km atual'].max()
-        km_min = g['km atual'].min()
-        litros = g['quantidade de litros'].sum()
-        autonomia = (km_max - km_min) / litros if litros > 0 and pd.notnull(km_max) and pd.notnull(km_min) else None
+        g = g.dropna(subset=['km atual','quantidade de litros'])
+        if g.empty or g['quantidade de litros'].sum() == 0:
+            autonomia = None
+        else:
+            km_max = g['km atual'].max()
+            km_min = g['km atual'].min()
+            litros_totais = g['quantidade de litros'].sum()
+            autonomia = (km_max - km_min) / litros_totais
         resultados.append({'Placa': placa, 'Autonomia (km/L)': autonomia})
     return pd.DataFrame(resultados).sort_values('Autonomia (km/L)', ascending=False)
 
@@ -134,7 +139,7 @@ def main():
     df_filtro['AnoMes'] = df_filtro['data'].dt.to_period('M').astype(str)
 
     # ---------------------------
-    # Aba Métricas Gerais
+    # Métricas Gerais
     # ---------------------------
     st.subheader("📊 Métricas Gerais")
     for comb in df_filtro['descrição despesa'].dropna().unique():
@@ -149,7 +154,7 @@ def main():
         col3.metric("Preço Médio por Litro", f"R$ {preco_medio:.3f}")
 
     # ---------------------------
-    # Aba Autonomia
+    # Autonomia
     # ---------------------------
     st.subheader("🚙 Autonomia (km/L) por Veículo")
     autonomia_df = calcula_autonomia(df_filtro)
@@ -157,7 +162,7 @@ def main():
     st.dataframe(autonomia_df)
 
     # ---------------------------
-    # Evolução mensal litros por combustível
+    # Evolução Mensal Litros
     # ---------------------------
     st.subheader("⛽ Evolução Mensal de Litros por Combustível")
     litros_mes = df_filtro.groupby(['AnoMes','descrição despesa'])['quantidade de litros'].sum().reset_index()
@@ -167,7 +172,7 @@ def main():
     st.plotly_chart(fig_litros, use_container_width=True)
 
     # ---------------------------
-    # Evolução mensal preço médio por litro
+    # Evolução Mensal Preço Médio
     # ---------------------------
     st.subheader("💲 Evolução Mensal do Preço Médio por Litro")
     preco_mes = df_filtro.dropna(subset=['quantidade de litros','valor_total']).groupby(['AnoMes','descrição despesa']).apply(
@@ -190,7 +195,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
