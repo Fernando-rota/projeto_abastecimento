@@ -55,19 +55,20 @@ if arquivo:
         # Concatenar interno + externo
         df_filtro = pd.concat([df_interno, df_externo], ignore_index=True)
 
-        # Mapear colunas
+        # Mapear colunas (agora com veículo)
         nomes_esperados = {
             "data": ["Data", "Carimbo de data/hora"],
             "descricao": ["Descrição Despesa", "descricao despesa", "Tipo"],
             "placa": ["Placa", "placa", "Veículo", "veiculo"],
+            "veiculo": ["Veículo", "veiculo", "Modelo", "modelo"],
             "litros": ["Quantidade de litros", "quantidade de litros", "Litros", "litros"],
             "valor_total": ["Valor Total", "valor total", "valor_total"],
             "km": ["KM Atual", "km atual", "km"]
         }
         mapa_colunas = mapear_colunas(df_filtro, nomes_esperados)
 
-        # Verificar colunas faltantes
-        colunas_faltando = [c for c in nomes_esperados if c not in mapa_colunas]
+        # Verificar colunas obrigatórias
+        colunas_faltando = [c for c in ["data", "descricao", "placa", "litros", "valor_total"] if c not in mapa_colunas]
         if colunas_faltando:
             st.error(f"❌ Não foi possível encontrar as colunas: {', '.join(colunas_faltando)}")
             st.stop()
@@ -92,10 +93,9 @@ if arquivo:
             for comb in df_filtro[mapa_colunas["descricao"]].dropna().unique():
                 df_combustivel = df_filtro[df_filtro[mapa_colunas["descricao"]] == comb].copy()
 
-                # Filtrar linhas válidas para cálculo do preço médio
                 df_validas = df_combustivel.dropna(subset=[mapa_colunas["valor_total"], mapa_colunas["litros"], mapa_colunas["placa"]])
                 df_validas = df_validas[df_validas[mapa_colunas["valor_total"]] > 0]
-                df_validas = df_validas[~df_validas[mapa_colunas["placa"]].str.upper().isin(["-", "NONE", "NAN", "NULL", ""])]
+                df_validas = df_validas[~df_validas[mapa_colunas["placa"]].astype(str).str.upper().isin(["-", "NONE", "NAN", "NULL", ""])]
 
                 litros_totais = df_validas[mapa_colunas["litros"]].sum()
                 valor_total = df_validas[mapa_colunas["valor_total"]].sum()
@@ -112,7 +112,7 @@ if arquivo:
         # ---------------------------
         with abas[1]:
             st.subheader("📈 Consumo por Veículo (dados prontos)")
-            colunas_esperadas = ['PLACA', 'TOTAL LITROS', 'KM RODADO', 'AUTONOMIA']
+            colunas_esperadas = ['PLACA', 'VEÍCULO', 'TOTAL LITROS', 'KM RODADO', 'AUTONOMIA']
             if not all(col in df_consumo.columns for col in colunas_esperadas):
                 st.error(f"A aba 'Consumo' no Excel precisa conter as colunas: {', '.join(colunas_esperadas)}")
             else:
@@ -132,7 +132,6 @@ if arquivo:
                                 barmode='group', labels={'AnoMes': 'Mês', mapa_colunas["litros"]: 'Litros'},
                                 title="Litros Mensais por Combustível")
             st.plotly_chart(fig_litros, use_container_width=True)
-            # Tabela detalhada abaixo do gráfico
             litros_mes_display = litros_mes.copy()
             litros_mes_display[mapa_colunas["litros"]] = litros_mes_display[mapa_colunas["litros"]].apply(lambda x: f"{x:,.2f} L")
             st.dataframe(litros_mes_display)
@@ -153,7 +152,6 @@ if arquivo:
                                 labels={'AnoMes': 'Mês', 'Preço Médio': 'R$ / Litro'},
                                 title="Preço Médio Mensal por Combustível")
             st.plotly_chart(fig_preco, use_container_width=True)
-            # Tabela detalhada abaixo do gráfico
             preco_mes_display = preco_mes.copy()
             preco_mes_display['Preço Médio'] = preco_mes_display['Preço Médio'].apply(lambda x: f"R$ {x:.3f}")
             st.dataframe(preco_mes_display)
@@ -167,7 +165,6 @@ if arquivo:
                               barmode='group', labels={'AnoMes': 'Mês', mapa_colunas["litros"]: 'Litros', 'origem': 'Origem'},
                               title="Abastecimento Interno x Externo Mensal")
             st.plotly_chart(fig_comp, use_container_width=True)
-            # Tabela detalhada abaixo do gráfico
             comparativo_display = comparativo.copy()
             comparativo_display[mapa_colunas["litros"]] = comparativo_display[mapa_colunas["litros"]].apply(lambda x: f"{x:,.2f} L")
             st.dataframe(comparativo_display)
